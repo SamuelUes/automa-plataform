@@ -1,0 +1,76 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+.yarn/
+
+# Next.js
+.next/
+out/
+
+# Supabase local runtime
+.supabase/
+supabase/.branches/
+supabase/.temp/
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Test and coverage output
+coverage/
+.nyc_output/
+playwright-report/
+test-results/
+
+# TypeScript
+*.tsbuildinfo
+
+# Generated files
+/generated/
+/prisma/generated/
+
+# IDE and editor files
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.example.json
+.idea/
+*.iml
+
+# Operating system files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+# Build and deployment artifacts
+.vercel/
+.netlify/
+
+# Local certificates and keys
+*.pem
+*.key
+*.crt
+
+.windsurf/
+.claude/
+.agents/
+
+migrations/
+config.toml
+
+migrations/
+config.toml

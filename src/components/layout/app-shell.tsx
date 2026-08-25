@@ -1,0 +1,177 @@
+"use client";
+
+import { useState } from "react";
+import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
+import { cn, getInitials } from "@/lib/utils";
+import { NotificationBell } from "@/components/layout/notification-bell";
+import { GlobalSearch } from "@/components/layout/global-search";
+import { Button } from "@/components/ui/button";
+import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Bot, BriefcaseBusiness, ChevronRight, CircleHelp, Command, FileText, Inbox, LayoutDashboard, LogOut, Menu, Moon, PanelLeft, Settings, Sun, Users, Workflow, Zap } from "lucide-react";
+import { useTheme } from "next-themes";
+
+const mainNav = [
+  { href: "/dashboard", label: "Inicio", icon: LayoutDashboard },
+  { href: "/cases", label: "Casos", icon: BriefcaseBusiness, badge: "8" },
+  { href: "/emails", label: "Correos", icon: Inbox },
+  { href: "/approvals", label: "Aprobaciones", icon: FileText, badge: "3" },
+];
+const operationsNav = [
+  { href: "/delegations", label: "Delegaciones", icon: Users },
+  { href: "/follow-ups", label: "Seguimientos", icon: Zap },
+  { href: "/assistant", label: "Conversaciones", icon: Bot },
+  { href: "/automations", label: "Automatizaciones", icon: Workflow },
+];
+const systemNav = [{ href: "/activity", label: "Actividad", icon: PanelLeft }, { href: "/settings", label: "Configuración", icon: Settings }];
+
+function NavContent({ collapsed, onNavigate }: { collapsed: boolean; onNavigate?: () => void }) {
+  const pathname = usePathname();
+  const navGroup = (items: typeof mainNav, title: string) => 
+  <div className="mb-6">
+    <p className={cn("px-3 mb-2 font-mono text-[10px] uppercase tracking-[.16em] text-muted-foreground/65", collapsed && "sr-only")}>{title} </p>
+    
+    {items.map(({ href, label, icon: Icon, badge }) => { const active = pathname === href || pathname.startsWith(href + "/"); 
+    
+    return (
+    
+    <Link key={href} href={href} onClick={onNavigate} title={collapsed ? label : undefined} className={cn("group flex items-center gap-3 h-9 rounded-md px-3 text-[13px] transition-colors", active ? "bg-sidebar-accent text-foreground font-medium" : "text-muted-foreground hover:bg-sidebar-accent/70 hover:text-foreground", collapsed && "justify-center px-0") }>
+      <Icon className={cn("h-4.25 w-4.25 shrink-0", active ? "text-foreground" : "text-muted-foreground/80")} />
+      <span className={cn("flex-1 truncate", collapsed && "hidden")}>{label}
+        {badge && !collapsed && 
+         <span className="min-w-5 h-5 px-1.5 rounded-full bg-foreground/8 text-[10px] font-mono text-muted-foreground flex items-center justify-center">{badge}
+         </span>}
+      </span>
+      </Link>
+    );
+  })}
+  </div>;
+
+  return <>
+  <div className="flex items-center gap-3 h-12 mb-8 px-2">
+    <div className="h-8 w-8 rounded-lg bg-primary text-primary-foreground flex items-center justify-center shrink-0">
+      <Command className="h-4 w-4" />
+    </div>
+    {!collapsed && <div className="font-semibold text-sm tracking-tight">Prologistica 
+      <span className="text-muted-foreground font-normal">AI</span>
+    </div>}
+  </div>
+  {navGroup(mainNav, "Command Center")}
+  {navGroup(operationsNav, "Operaciones")}
+  {navGroup(systemNav, "Sistema")}
+  </>;
+}
+
+type CurrentUser = {
+  fullName: string;
+  email: string;
+  role: string;
+  avatarUrl?: string | null;
+};
+
+function Sidebar({
+  collapsed,
+  setCollapsed,
+  currentUser,
+}: {
+  collapsed: boolean;
+  setCollapsed: (value: boolean) => void;
+  currentUser: CurrentUser;
+}) {
+  const router = useRouter();
+  async function signOut() { 
+    await createClient().auth.signOut(); 
+    router.push("/login"); 
+    router.refresh(); 
+  }
+    
+  return (
+  <aside className={cn("hidden lg:flex flex-col border-r bg-sidebar border-sidebar-border p-3 transition-[width] duration-200", collapsed ? "w-18" : "w-61")}>
+    <NavContent collapsed={collapsed} />
+    <div className="mt-auto">
+      <div className={cn("border-t border-sidebar-border pt-3", collapsed && "flex flex-col items-center")}>
+        <button className={cn("w-full flex items-center gap-3 rounded-md px-2 py-2.5 text-left hover:bg-sidebar-accent transition-colors", collapsed && "justify-center")}>
+          <Avatar className="h-8 w-8">
+            <AvatarFallback className="bg-[#d7e7e2] text-[#28584e] text-xs font-semibold">{getInitials(currentUser.fullName)}</AvatarFallback>
+          </Avatar>
+          {!collapsed && <div className="min-w-0"><div className="text-xs font-medium truncate">{currentUser.fullName}</div><div className="text-[11px] text-muted-foreground truncate">{currentUser.role}</div></div>}
+        </button>
+        {!collapsed && <div className="flex items-center gap-2 px-3 mt-3 text-[11px] text-muted-foreground">
+          <span className="h-1.5 w-1.5 rounded-full bg-success" /> Conectado <span className="ml-auto font-mono text-[10px]">v0.1</span>
+        </div>}
+        <button onClick={signOut} title="Cerrar sesión" className={cn("mt-2 flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground px-2 py-2", collapsed && "justify-center")}>
+          <LogOut className="h-4 w-4" />
+          {!collapsed && "Cerrar sesión"}
+        </button>
+      </div>
+    </div>
+    <button aria-label={collapsed ? "Expandir sidebar" : "Colapsar sidebar"} onClick={() => setCollapsed(!collapsed)} className="absolute -right-3 top-14 h-6 w-6 rounded-full border bg-background flex items-center justify-center shadow-sm hover:bg-accent">
+      <ChevronRight className={cn("h-3.5 w-3.5 transition-transform", !collapsed && "rotate-180")} />
+    </button>
+  </aside>
+  );
+}
+
+export function AppShell({
+  children,
+  currentUser,
+}: {
+  children: React.ReactNode;
+  currentUser: CurrentUser;
+}) {
+  const [collapsed, setCollapsed] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const { theme, setTheme } = useTheme();
+  return (
+  <div className="min-h-screen flex bg-background">
+    <div className="relative">
+      <Sidebar
+        collapsed={collapsed}
+        setCollapsed={setCollapsed}
+        currentUser={currentUser}
+      />
+    </div>
+
+      <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
+        <SheetTrigger asChild>
+          <Button variant="ghost" size="icon" className="fixed left-4 top-4 z-30 lg:hidden" aria-label="Abrir menú"><Menu /></Button>
+        </SheetTrigger>
+        <SheetContent side="left" className="w-65 p-3 bg-sidebar">
+          <SheetTitle className="sr-only">Navegación principal</SheetTitle>
+          <NavContent collapsed={false} onNavigate={() => setMobileOpen(false)} />
+        </SheetContent>
+      </Sheet>
+      
+      <div className="flex-1 min-w-0 flex flex-col">
+        <header className="h-16 border-b flex items-center gap-3 px-4 sm:px-7 bg-background/90 backdrop-blur sticky top-0 z-20">
+          <div className="hidden sm:flex items-center gap-2 text-xs text-muted-foreground">
+            <span className="text-foreground font-medium">Command Center</span>
+            <ChevronRight className="h-3 w-3" />
+            <span className="capitalize">{usePathname().split("/")[1] || "inicio"}</span>
+          </div>
+          <div className="sm:hidden flex-1 text-sm font-semibold">Command Center</div>
+          <div className="ml-auto flex items-center gap-1.5">
+            <GlobalSearch />
+            <Button variant="ghost" size="icon" aria-label="Ayuda">
+              <CircleHelp />
+            </Button>
+            <NotificationBell />
+            <Button variant="ghost" size="icon" aria-label="Cambiar tema" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
+              {theme === "dark" ? <Sun /> : <Moon />}
+            </Button>
+            <div className="hidden sm:block ml-1 h-7 w-px bg-border" />
+            <Avatar className="h-8 w-8 sm:hidden">
+              <AvatarFallback className="bg-[#d7e7e2] text-[#28584e] text-xs">{getInitials(currentUser.fullName)}</AvatarFallback>
+            </Avatar>
+          </div>
+        </header>
+        
+        <main className="flex-1 overflow-auto">
+          <div className="max-w-360 mx-auto px-4 py-7 sm:px-7 lg:px-10">{children}</div>
+        </main>
+      </div>
+    </div>
+  );
+}
