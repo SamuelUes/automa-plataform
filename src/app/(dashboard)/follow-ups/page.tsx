@@ -1,8 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
-import { createAction } from "@/lib/actions";
+import { createAction, getOperationError } from "@/lib/actions";
+import { FollowUpForm, type FollowUpFormValues } from "@/components/dashboard/follow-up-form";
+import { OperationDialog, OperationDialogContent, OperationDialogDescription, OperationDialogHeader, OperationDialogTitle } from "@/components/dashboard/operation-dialog";
 import { demoFollowUps, type FollowUp } from "@/lib/phase5-demo-data";
 import { formatDateTime } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -15,6 +18,19 @@ export default function FollowUpsPage() {
   const [followUps, setFollowUps] = useState<FollowUp[]>(demoFollowUps);
   const [filter, setFilter] = useState("all");
   const [processing, setProcessing] = useState<string | null>(null);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  async function createFollowUp(values: FollowUpFormValues) {
+    setProcessing("new");
+    try { await createAction("schedule_follow_up", { 
+      case_id: values.case_id, 
+      input_data: { 
+        ...values, 
+        scheduled_for: new Date(values.scheduled_for).toISOString() 
+      } 
+    }); toast.success("Seguimiento enviado a procesamiento."); setDialogOpen(false); }
+    catch (error) { toast.error(getOperationError(error)); }
+    finally { setProcessing(null); }
+  }
   useEffect(() => { 
     (async () => { 
       const { data } = await (createClient() as any).from("follow_ups").select("id,case_id,scheduled_for,reason,status,created_at").order("scheduled_for"); 
@@ -47,8 +63,18 @@ export default function FollowUpsPage() {
     <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
       <div><p className="font-mono text-[11px] uppercase tracking-[.18em] text-muted-foreground mb-3">Operations / Cadence</p>
        <h1 className="text-3xl font-semibold tracking-[-.04em]">Seguimientos</h1>
-        <p className="text-muted-foreground mt-1.5">No dejes que una promesa importante se pierda en el tiempo.</p></div><Button><Plus />Nuevo seguimiento</Button>
-       </div>
+        <p className="text-muted-foreground mt-1.5">No dejes que una promesa importante se pierda en el tiempo.</p></div><Button onClick={() => setDialogOpen(true)}><Plus />Nuevo seguimiento</Button>
+       <OperationDialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <OperationDialogContent>
+          <OperationDialogHeader>
+            <OperationDialogTitle>Nuevo seguimiento</OperationDialogTitle>
+            <OperationDialogDescription>Programa una acción para un caso.</OperationDialogDescription>
+          </OperationDialogHeader>
+          <FollowUpForm onSubmit={createFollowUp} onCancel={() => setDialogOpen(false)} submitting={processing === "new"} />
+        </OperationDialogContent>
+       </OperationDialog>
+      </div>
+        
        <div className="flex flex-wrap gap-2">{[["all", "Todos"], 
           ["overdue", "Vencidos"], 
           ["today", "Hoy"], 
@@ -96,7 +122,8 @@ export default function FollowUpsPage() {
                     </Button>
                   </>
                 )}
-                <Button size="icon" variant="ghost" aria-label="Más opciones">
+                <Button size="icon" variant="ghost" aria-label="Más opciones" 
+                  onClick={() => toast.info("No hay acciones adicionales disponibles para este seguimiento.")}>
                   <MoreHorizontal />
                 </Button>
               </div>

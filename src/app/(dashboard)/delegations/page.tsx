@@ -1,8 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
-import { createAction } from "@/lib/actions";
+import { createAction, getOperationError } from "@/lib/actions";
+import { DelegationForm, type DelegationFormValues } from "@/components/dashboard/delegation-form";
+import { OperationDialog, OperationDialogContent, OperationDialogDescription, OperationDialogHeader, OperationDialogTitle } from "@/components/dashboard/operation-dialog";
 import { demoDelegations, type Delegation } from "@/lib/phase5-demo-data";
 import { formatRelativeTime } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -13,8 +16,40 @@ import { BriefcaseBusiness, Check, MoreHorizontal, Plus } from "lucide-react";
 export default function DelegationsPage() {
   const [delegations, setDelegations] = useState<Delegation[]>(demoDelegations);
   const [processing, setProcessing] = useState<string | null>(null);
-  useEffect(() => { (async () => { const { data } = await (createClient() as any).from("delegations").select("id,case_id,assigned_to,assigned_by,department_id,reason,status,created_at").order("created_at", { ascending: false }); if (data?.length) setDelegations(data.map((item: any) => ({ ...item, caseId: item.case_id, caseNumber: 0, title: "Caso delegado", assignee: "Responsable", department: "Departamento", delegatedBy: "Usuario", createdAt: item.created_at, status: item.status === "completed" ? "completed" : "active" }))); })(); }, []);
-  async function complete(item: Delegation) { setProcessing(item.id); try { await createAction("delegate_case", { case_id: item.caseId || undefined, input_data: { delegation_id: item.id, status: "completed" } }); setDelegations((current) => current.map((entry) => entry.id === item.id ? { ...entry, status: "completed" } : entry)); } finally { setProcessing(null); } }
+  const [filter, setFilter] = useState<"active" | "completed">("active");
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const visible = useMemo(() => delegations.filter((item) => item.status === filter), [delegations, filter]);
+  async function createDelegation(values: DelegationFormValues) {
+    setSaving(true);
+    try { await createAction("delegate_case", { case_id: values.case_id, input_data: values }); toast.success("Delegación enviada a procesamiento."); setDialogOpen(false); }
+    catch (error) { toast.error(getOperationError(error)); }
+    finally { setSaving(false); }
+  }
+  useEffect(() => { (async () => { const { data } = await (createClient() as any).from("delegations").select("id,case_id,assigned_to,assigned_by,department_id,reason,status,created_at").order("created_at", { ascending: false }); 
+  if (data?.length) setDelegations(data.map((item: any) => ({ 
+    ...item, 
+    caseId: item.case_id, 
+    caseNumber: 0, 
+    title: "Caso delegado", 
+    assignee: "Responsable", 
+    department: "Departamento", 
+    delegatedBy: "Usuario", 
+    createdAt: item.created_at, 
+    status: item.status === "completed" ? "completed" : "active" 
+  }))); })(); }, []);
+  
+  async function complete(item: Delegation) { setProcessing(item.id); 
+    try { 
+      if (item.id.startsWith("delegation-")) { 
+        setDelegations((current) => current.map((entry) => entry.id === item.id ? { ...entry, status: "completed" } : entry)); 
+        toast.success("Delegación completada en la vista demo; no se guardó en Supabase."); 
+      } else { 
+        await createAction("delegate_case", { case_id: item.caseId || undefined, input_data: { delegation_id: item.id, status: "completed" } }); 
+        setDelegations((current) => current.map((entry) => entry.id === item.id ? { ...entry, status: "completed" } : entry)); 
+        toast.success("Delegación completada."); 
+      } 
+    } catch (error) { toast.error(getOperationError(error)); } finally { setProcessing(null); } }
   
   return ( 
   <div className="space-y-7">
@@ -26,19 +61,29 @@ export default function DelegationsPage() {
         
         </div>
         
-         <Button>
+         <Button onClick={() => setDialogOpen(true)}>
           <Plus />Delegar caso
          </Button>
          
+         <OperationDialog open={dialogOpen} onOpenChange={setDialogOpen}>
+          <OperationDialogContent>
+            <OperationDialogHeader>
+              <OperationDialogTitle>Delegar caso</OperationDialogTitle>
+              <OperationDialogDescription>Asigna un caso a un responsable.</OperationDialogDescription>
+            </OperationDialogHeader>
+            <DelegationForm onSubmit={createDelegation} onCancel={() => setDialogOpen(false)} submitting={saving} />
+          </OperationDialogContent>
+         </OperationDialog>
+         
          </div>
          <div className="flex gap-2">
-          <Button variant="secondary" size="sm">Activas 
+          <Button variant={filter === "active" ? "secondary" : "outline"} size="sm" onClick={() => setFilter("active")}>Activas 
             <span className="font-mono text-[10px] ml-1">{delegations.filter((item) => item.status === "active").length}</span>
           </Button>
           
-          <Button variant="outline" size="sm">Completadas 
+          <Button variant={filter === "completed" ? "secondary" : "outline"} size="sm" onClick={() => setFilter("completed")}>Completadas 
             <span className="font-mono text-[10px] ml-1">{delegations.filter((item) => item.status === "completed").length}</span>
-            </Button>
+          </Button>
              </div>
               <Card className="overflow-hidden">
                 <div className="overflow-x-auto">
@@ -55,7 +100,7 @@ export default function DelegationsPage() {
 
                       </tr>
                       </thead>
-                       <tbody className="divide-y">{delegations.map((item) => <tr key={item.id} className="group hover:bg-muted/25">
+                       <tbody className="divide-y">{visible.map((item) => <tr key={item.id} className="group hover:bg-muted/25">
                          <td className="px-5 py-4 min-w-65">
                           <p className="text-xs font-medium">{item.title}</p>
                           <p className="text-[11px] text-muted-foreground font-mono mt-1">Caso #{item.caseNumber}</p>
@@ -87,7 +132,8 @@ export default function DelegationsPage() {
                                   {processing === item.id ? "Guardando..." : "Completar"}
                                 </Button>
                               )}
-                              <button aria-label="Más opciones">
+                              <button aria-label="Más opciones" 
+                                onClick={() => toast.info("No hay acciones adicionales disponibles para esta delegación.")}>
                                 <MoreHorizontal className="h-4 w-4 text-muted-foreground" />
                               </button>
                             </div>

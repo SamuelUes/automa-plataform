@@ -1,6 +1,6 @@
 export type Delegation = { id: string; caseId?: string; caseNumber: number; title: string; assignee: string; department: string; delegatedBy: string; createdAt: string; reason: string; status: "active" | "completed" };
 export type FollowUp = { id: string; caseId?: string; caseNumber: number; title: string; company: string; reason: string; scheduledFor: string; owner: string; status: "overdue" | "today" | "upcoming" | "completed" };
-export type Activity = { id: string; event: string; actor: string; detail: string; time: string; tone: "success" | "info" | "warning" | "danger" };
+export type Activity = { id: string; event: string; actor: string; detail: string; time: string; tone: "success" | "info" | "warning" | "danger"; createdAt?: string };
 
 export const demoDelegations: Delegation[] = [
   { id: "delegation-1", caseNumber: 183, title: "Incidencia en entrega internacional", assignee: "Carlos Méndez", department: "Operaciones", delegatedBy: "Daniela García", createdAt: new Date(Date.now() - 45 * 60000).toISOString(), reason: "Requiere coordinación con el equipo de despacho y documentación aduanal.", status: "active" },

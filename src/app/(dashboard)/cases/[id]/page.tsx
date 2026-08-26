@@ -4,7 +4,13 @@ import Link from "next/link";
 import { FormEvent, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { createAction, getOperationError } from "@/lib/actions";
 import { demoCases, type DemoCase } from "@/lib/demo-data";
+import { isDemoId } from "@/components/dashboard/action-feedback";
+import { DelegationForm, type DelegationFormValues } from "@/components/dashboard/delegation-form";
+import { FollowUpForm, type FollowUpFormValues } from "@/components/dashboard/follow-up-form";
+import { OperationDialog, OperationDialogContent, OperationDialogDescription, OperationDialogHeader, OperationDialogTitle } from "@/components/dashboard/operation-dialog";
+import { toast } from "sonner";
 import { formatDateTime, formatRelativeTime } from "@/lib/utils";
 import { findCaseConversation, loadConversationMessages, type ConversationMessage } from "@/lib/conversations";
 import { Badge } from "@/components/ui/badge";
@@ -21,6 +27,57 @@ export default function CaseDetailPage() {
   const [messageInput, setMessageInput] = useState("");
   const [sendingMessage, setSendingMessage] = useState(false);
   const [messageNotice, setMessageNotice] = useState<string | null>(null);
+  const [dialog, setDialog] = useState<"delegation" | "follow-up" | null>(null);
+  const [processing, setProcessing] = useState(false);
+  async function resolveCase() {
+    if (!id || processing) return;
+    setProcessing(true);
+    try {
+      if (isDemoId(id)) { 
+        setItem((current) => ({ 
+          ...current, 
+          status: "resolved", 
+          updated_at: new Date().toISOString() 
+        })); 
+        toast.success("Caso resuelto en la vista demo; no se guardó en Supabase."); 
+        return; 
+      }
+      await createAction("resolve_case", { case_id: id });
+      toast.success("Caso enviado a resolución.");
+    } catch (error) { toast.error(getOperationError(error)); }
+    finally { setProcessing(false); }
+  }
+  async function delegateCase(values: DelegationFormValues) {
+    if (!id) return;
+    setProcessing(true);
+    try { if (isDemoId(id)) toast.success("Delegación simulada; no se guardó en Supabase."); else { await 
+      createAction("delegate_case", { 
+        case_id: id, 
+        input_data: values 
+      }); 
+      toast.success("Delegación enviada a procesamiento."); 
+    } 
+    setDialog(null); }
+    catch (error) { toast.error(getOperationError(error)); }
+    finally { setProcessing(false); }
+  }
+  async function createFollowUp(values: FollowUpFormValues) {
+    if (!id) return;
+    setProcessing(true);
+    try { if (isDemoId(id)) toast.success("Seguimiento simulado; no se guardó en Supabase."); else { await 
+      createAction("schedule_follow_up", { 
+        case_id: id, 
+        input_data: { 
+          ...values, 
+          scheduled_for: new Date(values.scheduled_for).toISOString() 
+        } 
+      }); 
+      toast.success("Seguimiento enviado a procesamiento."); 
+    } 
+    setDialog(null); }
+    catch (error) { toast.error(getOperationError(error)); }
+    finally { setProcessing(false); }
+  }
   useEffect(() => { 
     if (id?.startsWith("demo-")) return; 
     (async () => { 
@@ -61,6 +118,28 @@ export default function CaseDetailPage() {
   }
   
   return (
+  <>
+  <OperationDialog open={dialog === "delegation"} 
+    onOpenChange={(open) => setDialog(open ? "delegation" : null)}>
+    <OperationDialogContent>
+      <OperationDialogHeader>
+        <OperationDialogTitle>Delegar caso</OperationDialogTitle>
+        <OperationDialogDescription>Asigna la responsabilidad de este caso.</OperationDialogDescription>
+      </OperationDialogHeader>
+      <DelegationForm onSubmit={delegateCase} onCancel={() => setDialog(null)} submitting={processing} />
+    </OperationDialogContent>
+  </OperationDialog>
+  
+  <OperationDialog open={dialog === "follow-up"} onOpenChange={(open) => setDialog(open ? "follow-up" : null)}>
+    <OperationDialogContent>
+      <OperationDialogHeader>
+        <OperationDialogTitle>Crear seguimiento</OperationDialogTitle>
+        <OperationDialogDescription>Programa la próxima acción para este caso.</OperationDialogDescription>
+      </OperationDialogHeader>
+      <FollowUpForm onSubmit={createFollowUp} onCancel={() => setDialog(null)} submitting={processing} />
+    </OperationDialogContent>
+  </OperationDialog>
+
   <div className="space-y-6">
     <Link href="/cases" className="inline-flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground">
       <ArrowLeft className="h-3.5 w-3.5" />Volver a casos
@@ -77,8 +156,12 @@ export default function CaseDetailPage() {
         <p className="text-muted-foreground mt-2 max-w-2xl">{item.description}</p>
       </div>
       <div className="flex gap-2">
-        <Button variant="outline"><MoreHorizontal />Más acciones</Button>
-        <Button><Check />Resolver caso</Button>
+        <Button variant="outline" onClick={() => toast.info("Las acciones disponibles se mostrarán según el estado del caso.")}>
+          <MoreHorizontal />Más acciones
+        </Button>
+        <Button onClick={() => void resolveCase()} disabled={processing || item.status === "resolved"}>
+          <Check />{processing ? "Procesando..." : "Resolver caso"}
+        </Button>
       </div>
     </div>
     
@@ -232,13 +315,16 @@ export default function CaseDetailPage() {
           </CardHeader>
           
           <CardContent className="space-y-2">
-            <Button variant="outline" className="w-full justify-start">
+            <Button variant="outline" className="w-full justify-start" 
+              onClick={() => toast.info("No hay una aprobación vinculada disponible para revisar.")}>
               <FileText />Revisar aprobación <ChevronRight className="ml-auto" />
             </Button>
-            <Button variant="outline" className="w-full justify-start">
+            <Button variant="outline" className="w-full justify-start" 
+              onClick={() => setDialog("delegation")}>
               <UsersIcon />Delegar caso <ChevronRight className="ml-auto" />
             </Button>
-            <Button variant="outline" className="w-full justify-start">
+            <Button variant="outline" className="w-full justify-start" 
+              onClick={() => setDialog("follow-up")}>
               <CalendarClock />Crear seguimiento <ChevronRight className="ml-auto" />
             </Button>
           </CardContent>
@@ -246,6 +332,7 @@ export default function CaseDetailPage() {
       </aside>
     </div>
   </div>
+  </>
   );
 }
 

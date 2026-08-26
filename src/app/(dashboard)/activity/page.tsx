@@ -14,22 +14,29 @@ export default function ActivityPage() {
   const [items, setItems] = useState<Activity[]>(demoActivity);
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
+  const [dateOpen, setDateOpen] = useState(false);
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
   const load = useCallback(async () => { const { data } = await (createClient() as any).from("audit_logs").select("id,event_type,user_id,case_id,entity_type,created_at,metadata,new_data").order("created_at", { ascending: false }).limit(50); if (data?.length) setItems(data.map((item: any) => ({ 
     id: item.id, 
     event: item.event_type, 
     actor: "Usuario del equipo", 
     detail: item.case_id ? `Caso ${item.case_id}` : "Actividad del sistema", 
-    time: new Date(item.created_at).toLocaleString("es-ES", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }), 
+    time: new Date(item.created_at).toLocaleString("es-ES", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }),
+    createdAt: item.created_at,
     tone: "info" 
   }))); }, []);
 
   useEffect(() => { void load(); }, [load]);
   useRealtimeTable("audit_logs", load);
-  const visible = useMemo(() => items.filter((item) => (filter === "all" || item.tone === filter) && (!search || `
-    ${item.event} 
-    ${item.actor} 
-    ${item.detail}`.toLowerCase().includes(search.toLowerCase()))), 
-    [filter, items, search]);
+  const visible = useMemo(() => items.filter((item) => {
+    const date = item.createdAt ? new Date(item.createdAt) : null;
+    const after = !fromDate || (date && date >= new Date(`${fromDate}T00:00:00`));
+    const before = !toDate || (date && date <= new Date(`${toDate}T23:59:59`));
+    return (filter === "all" || item.tone === filter) && after && before && (
+      !search || `${item.event} ${item.actor} ${item.detail}`.toLowerCase().includes(search.toLowerCase())
+    );
+  }), [filter, items, search, fromDate, toDate]);
   
   return (
   <div className="space-y-7">
@@ -48,9 +55,18 @@ export default function ActivityPage() {
         <div className="flex flex-wrap gap-2">
           {[["all", "Todos"], ["success", "Éxito"], ["info", "Operativo"], ["warning", "Revisión"], ["danger", "Errores"]].map(([key, label]) => <Button key={key} size="sm" variant={filter === key ? "secondary" : "outline"} onClick={() => setFilter(key)}>{label}</Button>)}
         </div>
-        <Button variant="outline" size="sm">
+        <Button variant="outline" size="sm" onClick={() => setDateOpen((open) => !open)}>
           <CalendarDays />Fecha <ChevronDown />
         </Button>
+        {dateOpen && <div className="flex items-end gap-2 rounded-md border bg-background p-2 text-xs">
+          <label className="grid gap-1">Desde
+            <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} className="h-8 rounded-md border px-2" />
+          </label>
+          <label className="grid gap-1">Hasta
+            <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} className="h-8 rounded-md border px-2" />
+          </label>
+          <Button variant="ghost" size="sm" onClick={() => { setFromDate(""); setToDate(""); }}>Limpiar</Button>
+        </div>}
       </div>
       <Card>
         <CardContent className="p-0">

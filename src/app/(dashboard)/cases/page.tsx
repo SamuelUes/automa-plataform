@@ -5,6 +5,10 @@ import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { demoCases, type DemoCase } from "@/lib/demo-data";
 import { formatRelativeTime } from "@/lib/utils";
+import { isDemoId } from "@/components/dashboard/action-feedback";
+import { CaseForm, type CaseFormValues } from "@/components/dashboard/case-form";
+import { OperationDialog, OperationDialogContent, OperationDialogDescription, OperationDialogHeader, OperationDialogTitle } from "@/components/dashboard/operation-dialog";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
@@ -20,6 +24,11 @@ export default function CasesPage() {
   const [priority, setPriority] = useState("all");
   const [status, setStatus] = useState("all");
   const [loading, setLoading] = useState(true);
+  const [caseDialogOpen, setCaseDialogOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [moreFiltersOpen, setMoreFiltersOpen] = useState(false);
+  const [requiresApproval, setRequiresApproval] = useState("all");
+  const [requiresHuman, setRequiresHuman] = useState("all");
   
   useEffect(() => { 
     (async () => { 
@@ -29,11 +38,51 @@ export default function CasesPage() {
     })(); 
   }, []);
   
-  const filtered = useMemo(() => cases.filter((item) => (!search || `${item.title} 
-    ${item.case_number} 
-    ${item.client} 
-    ${item.company}`.toLowerCase().includes(search.toLowerCase())) && (priority === "all" || item.priority === priority) 
-    && (status === "all" || item.status === status)), [cases, search, priority, status]);
+  const filtered = useMemo(() => cases.filter((item) => (!search || `${item.title} ${item.case_number} ${item.client} ${item.company}`.toLowerCase().includes(search.toLowerCase())) && (priority === "all" || item.priority === priority) && (status === "all" || item.status === status) && (requiresApproval === "all" || String(item.requires_approval) === requiresApproval) && (requiresHuman === "all" || String(item.requires_human) === requiresHuman)), [cases, search, priority, status, requiresApproval, requiresHuman]);
+  async function createCase(values: CaseFormValues) {
+    setSaving(true);
+    try {
+      if (isDemoId(cases[0]?.id)) {
+        const demo = { 
+          id: `demo-case-${Date.now()}`, 
+          case_number: Math.max(0, ...cases.map((entry) => entry.case_number)) + 1, 
+          ...values, 
+          description: values.description || null, 
+          status: "new", 
+          requires_approval: false, 
+          requires_human: false, 
+          client: "Cliente nuevo", 
+          company: "—", 
+          department: "—", 
+          assignee: "—", 
+          created_at: new Date().toISOString(), 
+          updated_at: new Date().toISOString() 
+        } as DemoCase;
+        setCases((current) => [demo, ...current]); setCaseDialogOpen(false); toast.success("Caso añadido a la vista demo; no se guardó en Supabase."); return;
+      }
+      const client = createClient();
+      const { data: { user } } = await client.auth.getUser();
+      if (!user) throw new Error("Sesión no disponible.");
+      const { data: profile, error: profileError } = await (client as any).from("users").select("organization_id").eq("id", user.id).single();
+      if (profileError || !profile?.organization_id) throw profileError || new Error("No se encontró la organización.");
+      const { error } = await (client as any).from("cases").insert({
+        organization_id: profile.organization_id,
+        title: values.title,
+        description: values.description || null,
+        priority: values.priority
+      }).select("id").single();
+      if (error) throw error;
+      setCaseDialogOpen(false); toast.success("Caso creado.");
+      const { data } = await createClient().from("cases").select("id,case_number,title,description,status,priority,updated_at,created_at,requires_approval,requires_human").order("updated_at", { ascending: false }).limit(100);
+      if (data?.length) setCases(data.map((entry) => Object.assign({}, entry, { 
+        client: "Cliente", 
+        company: "—", 
+        department: "—", 
+        assignee: "—" 
+      })) as DemoCase[]);
+    } catch (error) { toast.error(error instanceof Error ? error.message : "No se pudo crear el caso."); }
+    finally { setSaving(false); }
+  }
   
   return (
   <div className="space-y-7">
@@ -43,8 +92,17 @@ export default function CasesPage() {
         <h1 className="text-3xl font-semibold tracking-[-.04em]">Casos</h1>
         <p className="text-muted-foreground mt-1.5">Gestiona solicitudes, reclamos y asuntos que requieren seguimiento.</p>
       </div>
-      <Button><Plus />Nuevo caso</Button>
+      <Button onClick={() => setCaseDialogOpen(true)}><Plus />Nuevo caso</Button>
     </div>
+    <OperationDialog open={caseDialogOpen} onOpenChange={setCaseDialogOpen}>
+      <OperationDialogContent>
+        <OperationDialogHeader>
+          <OperationDialogTitle>Nuevo caso</OperationDialogTitle>
+          <OperationDialogDescription>Registra una solicitud para iniciar su gestión.</OperationDialogDescription>
+        </OperationDialogHeader>
+        <CaseForm onSubmit={createCase} onCancel={() => setCaseDialogOpen(false)} submitting={saving} />
+      </OperationDialogContent>
+    </OperationDialog>
 
     <div className="flex flex-col xl:flex-row gap-3 justify-between">
       <div className="flex flex-1 flex-wrap gap-2">
@@ -60,8 +118,24 @@ export default function CasesPage() {
           <option value="all">Todas las prioridades</option>
           {Object.entries(priorityLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
         </select>
-        <Button variant="outline" size="sm"><SlidersHorizontal />Más filtros</Button>
+        <Button variant="outline" size="sm" onClick={() => setMoreFiltersOpen((open) => !open)}>
+          <SlidersHorizontal />Más filtros
+        </Button>
       </div>
+      {moreFiltersOpen && <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/20 p-3 text-xs">
+        <span className="text-muted-foreground">Requisitos:</span>
+        <select aria-label="Filtrar aprobación" value={requiresApproval} onChange={(e) => setRequiresApproval(e.target.value)} className="h-8 rounded-md border bg-background px-2">
+          <option value="all">Cualquier aprobación</option>
+          <option value="true">Requiere aprobación</option>
+          <option value="false">Sin aprobación</option>
+        </select>
+        <select aria-label="Filtrar atención humana" value={requiresHuman} onChange={(e) => setRequiresHuman(e.target.value)} className="h-8 rounded-md border bg-background px-2">
+          <option value="all">Cualquier atención</option>
+          <option value="true">Requiere humano</option>
+          <option value="false">Automático</option>
+        </select>
+        <Button variant="ghost" size="sm" onClick={() => { setRequiresApproval("all"); setRequiresHuman("all"); }}>Limpiar</Button>
+      </div>}
       <div className="flex items-center gap-1 border rounded-md p-1 w-fit">
         <Button size="sm" variant={view === "table" ? "secondary" : "ghost"} onClick={() => setView("table")}><List />Tabla</Button>
         <Button size="sm" variant={view === "kanban" ? "secondary" : "ghost"} onClick={() => setView("kanban")}><LayoutGrid />Kanban</Button>
