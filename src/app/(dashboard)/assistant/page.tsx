@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { createAction } from "@/lib/actions";
+import { loadConversationMessages } from "@/lib/conversations";
 import { initialAssistantMessages, type AssistantMessage } from "@/lib/assistant-demo-data";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -18,7 +19,7 @@ export default function AssistantPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
-  useEffect(() => { (async () => { const { data } = await (createClient() as any).from("conversations").select("id,title,updated_at").eq("conversation_type", "assistant").order("updated_at", { ascending: false }).limit(1).maybeSingle(); if (data?.id) setConversationId(data.id); })(); }, []);
+  useEffect(() => { (async () => { const { data } = await (createClient() as any).from("conversations").select("id,title,updated_at").eq("conversation_type", "assistant").order("updated_at", { ascending: false }).limit(1).maybeSingle(); if (data?.id) { setConversationId(data.id); const stored = await loadConversationMessages(data.id); setMessages(stored.map((message) => ({ id: message.id, role: message.role === "user" ? "user" : "assistant", content: message.content || "", createdAt: new Date(message.created_at).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" }) }))); } })(); }, []);
   async function sendMessage(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const content = input.trim(); if (!content || sending) return; setInput(""); 
     setNotice(null); 
     setMessages((current) => [...current, { id: crypto.randomUUID(), 

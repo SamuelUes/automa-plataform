@@ -3,6 +3,7 @@ declare const Deno: { serve(handler: (request: Request) => Response | Promise<Re
 import { corsHeaders } from "../_shared/cors.ts";
 import { getAuthedClient } from "../_shared/auth.ts";
 import { triggerWorkflow } from "../_shared/n8n/client.ts";
+import { createExecution } from "../_shared/integration.ts";
 import { actionInputSchema } from "../_shared/validation.ts";
 
 const allowedActions = new Set([
@@ -95,6 +96,20 @@ Deno.serve(async (req: Request) => {
       p_action_id: action.id, 
       p_new_data: { action_type: actionType } 
     });
+    const workflowExecutionId = await createExecution(client, {
+      event_type: "action_requested",
+      workflow_code: body.workflow_code || actionType,
+      request_id: crypto.randomUUID(),
+      correlation_id: body.conversation_id || action.id,
+      idempotency_key: `${idempotencyKey}:execution`,
+      organization_id: profile.organization_id,
+      user_id: user.id,
+      case_id: body.case_id || null,
+      conversation_id: body.conversation_id || null,
+      source_message_id: body.message_id || null,
+      action_id: action.id,
+      input_data: body.input_data || {},
+    });
     try {
       const n8nResult = await triggerWorkflow({ 
         action_id: action.id,
@@ -103,7 +118,8 @@ Deno.serve(async (req: Request) => {
         organization_id: profile.organization_id, 
         case_id: body.case_id || null, 
         action_type: actionType, 
-        workflow_code: body.workflow_code, 
+        workflow_code: body.workflow_code,
+        workflow_execution_id: workflowExecutionId,
         input_data: body.input_data || {} 
       });
       await client.from("actions").update({ status: "queued", n8n_execution_id: n8nResult.execution_id || null }).eq("id", action.id);

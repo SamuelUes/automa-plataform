@@ -1,11 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { demoCases, type DemoCase } from "@/lib/demo-data";
 import { formatDateTime, formatRelativeTime } from "@/lib/utils";
+import { findCaseConversation, loadConversationMessages, type ConversationMessage } from "@/lib/conversations";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,13 +16,49 @@ import { ArrowLeft, Bot, CalendarClock, Check, ChevronRight, CircleCheck, FileTe
 export default function CaseDetailPage() {
   const { id } = useParams<{ id: string }>();
   const [item, setItem] = useState<DemoCase>(demoCases.find((c) => c.id === id) || demoCases[0]);
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [messages, setMessages] = useState<ConversationMessage[]>([]);
+  const [messageInput, setMessageInput] = useState("");
+  const [sendingMessage, setSendingMessage] = useState(false);
+  const [messageNotice, setMessageNotice] = useState<string | null>(null);
   useEffect(() => { 
     if (id?.startsWith("demo-")) return; 
     (async () => { 
       const { data } = await createClient().from("cases").select("id,case_number,title,description,status,priority,updated_at,created_at,requires_approval,requires_human").eq("id", id).single(); 
-      if (data) setItem(Object.assign({}, data, { client: "Cliente", company: "—", department: "—", assignee: "—" }) as DemoCase); 
+      if (data) setItem(Object.assign({}, data, { 
+        client: "Cliente", 
+        company: "—", 
+        department: "—", 
+        assignee: "—" 
+      }) as DemoCase); 
     })(); 
   }, [id]);
+  
+  useEffect(() => {
+    if (!id || id.startsWith("demo-")) return;
+    (async () => {
+      try {
+        const conversation = await findCaseConversation(id);
+        if (!conversation?.id) return;
+        setConversationId(conversation.id);
+        setMessages(await loadConversationMessages(conversation.id));
+      } catch { setMessageNotice("No se pudo cargar la conversación del caso."); }
+    })();
+  }, [id]);
+  async function sendCaseMessage(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const content = messageInput.trim();
+    if (!content || !id || id.startsWith("demo-") || sendingMessage) return;
+    setSendingMessage(true); setMessageNotice(null); setMessageInput("");
+    try {
+      const { data, error } = await createClient().functions.invoke("case-messages", { body: { case_id: id, conversation_id: conversationId, content } });
+      if (error) throw error;
+      if (data?.conversation_id) setConversationId(data.conversation_id);
+      if (data?.conversation_id) setMessages(await loadConversationMessages(data.conversation_id));
+      setMessageNotice(data?.status === "failed" ? "El mensaje se guardó, pero n8n no pudo procesarlo." : "Mensaje enviado a procesamiento.");
+    } catch { setMessageNotice("No se pudo enviar el mensaje. Inténtalo de nuevo."); }
+    finally { setSendingMessage(false); }
+  }
   
   return (
   <div className="space-y-6">
@@ -133,33 +170,20 @@ export default function CaseDetailPage() {
           
           <CardContent>
             <div className="space-y-4">
-              <div className="flex gap-3">
-                <div className="h-7 w-7 rounded-full bg-[#d7e7e2] text-[#28584e] flex items-center justify-center shrink-0 text-[10px] font-semibold">DG</div>
-                <div className="rounded-lg bg-muted/50 p-3 max-w-[80%]">
-                  <p className="text-xs leading-relaxed">Necesito revisar la propuesta y confirmar el límite comercial antes de aprobarla.</p>
-                  <p className="text-[10px] text-muted-foreground mt-2">Tú · 09:46</p>
+              {messages.length === 0 && <p className="text-xs text-muted-foreground">Aún no hay mensajes en esta conversación.</p>}
+              {messages.map((message) => <div key={message.id} className={`flex gap-3 ${message.sender_type === "human" ? "justify-end" : ""}`}>
+                <div className={`rounded-lg p-3 max-w-[80%] ${message.sender_type === "human" ? "bg-primary text-primary-foreground" : "bg-muted/50"}`}>
+                  <p className="text-xs leading-relaxed">{message.content || ""}</p>
+                  <p className="text-[10px] opacity-60 mt-2">{message.sender_type === "ai" ? "Agente IA" : message.sender_type === "system" ? "Sistema" : "Usuario"} · {formatDateTime(message.created_at)}</p>
                 </div>
-              </div>
-              <div className="flex gap-3 justify-end">
-                <div className="rounded-lg bg-primary text-primary-foreground p-3 max-w-[80%]">
-                  <p className="text-xs leading-relaxed">La propuesta está lista para tu aprobación. He validado los datos clave.</p>
-                  <p className="text-[10px] text-primary-foreground/60 mt-2">Agente IA · 09:47</p>
-                </div>
-                <div className="h-7 w-7 rounded-full bg-primary text-primary-foreground flex items-center justify-center shrink-0">
-                  <Bot className="h-3.5 w-3.5" />
-                </div>
-              </div>
+                {message.sender_type !== "human" && <div className="h-7 w-7 rounded-full bg-primary text-primary-foreground flex items-center justify-center shrink-0"><Bot className="h-3.5 w-3.5" /></div>}
+              </div>)}
             </div>
-            <div className="flex gap-2 mt-6">
-              <input 
-                aria-label="Escribe un mensaje" 
-                className="h-9 flex-1 rounded-md border bg-background px-3 text-xs outline-none focus:ring-2 focus:ring-ring" 
-                placeholder="Añadir una nota al caso..." 
-              />
-              <Button size="icon" aria-label="Enviar nota">
-                <Send />
-              </Button>
-            </div>
+            <form className="flex gap-2 mt-6" onSubmit={sendCaseMessage}>
+              <input aria-label="Escribe un mensaje" value={messageInput} onChange={(event) => setMessageInput(event.target.value)} disabled={sendingMessage} className="h-9 flex-1 rounded-md border bg-background px-3 text-xs outline-none focus:ring-2 focus:ring-ring" placeholder="Añadir una nota al caso..." />
+              <Button type="submit" size="icon" aria-label="Enviar nota" disabled={sendingMessage || !messageInput.trim()}><Send /></Button>
+            </form>
+            {messageNotice && <p role="status" className="text-xs text-muted-foreground mt-2">{messageNotice}</p>}
           </CardContent>
         </Card>
       </div>

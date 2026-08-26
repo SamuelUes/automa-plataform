@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
@@ -123,7 +123,9 @@ export function AppShell({
 }) {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [mounted, setMounted] = useState(false);
   const { theme, setTheme } = useTheme();
+  useEffect(() => setMounted(true), []);
   return (
   <div className="min-h-screen flex bg-background">
     <div className="relative">
@@ -159,7 +161,7 @@ export function AppShell({
             </Button>
             <NotificationBell />
             <Button variant="ghost" size="icon" aria-label="Cambiar tema" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
-              {theme === "dark" ? <Sun /> : <Moon />}
+              {mounted ? (theme === "dark" ? <Sun /> : <Moon />) : <Sun className="opacity-0" />}
             </Button>
             <div className="hidden sm:block ml-1 h-7 w-px bg-border" />
             <Avatar className="h-8 w-8 sm:hidden">

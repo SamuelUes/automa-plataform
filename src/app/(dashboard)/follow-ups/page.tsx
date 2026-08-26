@@ -15,9 +15,32 @@ export default function FollowUpsPage() {
   const [followUps, setFollowUps] = useState<FollowUp[]>(demoFollowUps);
   const [filter, setFilter] = useState("all");
   const [processing, setProcessing] = useState<string | null>(null);
-  useEffect(() => { (async () => { const { data } = await (createClient() as any).from("follow_ups").select("id,case_id,scheduled_for,reason,status,created_at").order("scheduled_for"); if (data?.length) setFollowUps(data.map((item: any) => ({ ...item, caseId: item.case_id, caseNumber: 0, title: "Seguimiento de caso", company: "Cliente", reason: item.reason || "Seguimiento pendiente", scheduledFor: item.scheduled_for, owner: "Responsable", status: item.status === "completed" ? "completed" : "upcoming" }))); })(); }, []);
+  useEffect(() => { 
+    (async () => { 
+      const { data } = await (createClient() as any).from("follow_ups").select("id,case_id,scheduled_for,reason,status,created_at").order("scheduled_for"); 
+      if (data?.length) setFollowUps(data.map((item: any) => (
+        { 
+          ...item, 
+          caseId: item.case_id, 
+          caseNumber: 0, 
+          title: "Seguimiento de caso", 
+          company: "Cliente", 
+          reason: item.reason || "Seguimiento pendiente", 
+          scheduledFor: item.scheduled_for, 
+          owner: "Responsable", 
+          status: item.status === "completed" ? "completed" : "upcoming" 
+        }
+      ))); 
+    })(); 
+  }, []);
   const visible = useMemo(() => followUps.filter((item) => filter === "all" || item.status === filter), [followUps, filter]);
-  async function runAction(item: FollowUp, action: "schedule_follow_up" | "resolve_case") { setProcessing(item.id); try { await createAction(action, { case_id: item.caseId || undefined, input_data: { follow_up_id: item.id } }); if (action === "resolve_case") setFollowUps((current) => current.map((entry) => entry.id === item.id ? { ...entry, status: "completed" } : entry)); } finally { setProcessing(null); } }
+  async function runAction(item: FollowUp, action: "schedule_follow_up" | "resolve_case") { setProcessing(item.id); 
+    try { await createAction(action, { 
+      case_id: item.caseId || undefined, 
+      input_data: { follow_up_id: item.id } 
+    }); 
+    if (action === "resolve_case") setFollowUps((current) => current.map((entry) => entry.id === item.id ? { ...entry, status: "completed" } : entry)); 
+    } finally { setProcessing(null); } }
   
   return (
   <div className="space-y-7">

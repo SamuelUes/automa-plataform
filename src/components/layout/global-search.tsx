@@ -60,7 +60,7 @@ export function GlobalSearch() {
           className="border-0 shadow-none h-8 p-0 focus-visible:ring-0 text-xs"
           aria-label="Buscar casos, correos o acciones"
         />
-        <kbd className="hidden xl:inline-flex pointer-events-none h-5 select-none items-center rounded border bg-muted px-1.5 font-mono text-[10px]">⌘ K</kbd>
+        <kbd className="hidden xl:inline-flex pointer-events-none h-5 select-none items-center rounded border bg-muted px-1.5 font-mono text-[10px]"> K</kbd>
       </div>
 
       {open && query.trim().length >= 2 && (

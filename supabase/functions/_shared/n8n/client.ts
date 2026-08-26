@@ -8,6 +8,7 @@ export type N8nWorkflowPayload = {
   case_id?: string | null;
   action_type?: string;
   workflow_code?: string;
+  workflow_execution_id?: string | null;
   input_data?: Record<string, unknown>;
 };
 

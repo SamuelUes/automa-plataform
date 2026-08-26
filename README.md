@@ -34,6 +34,8 @@ Next.js no contiene Route Handlers, Server Actions ni secretos de backend.
 
 - `actions`: crea acciones idempotentes y dispara n8n.
 - `assistant`: procesa mensajes del Command Center.
+- `case-messages`: procesa conversaciones de los casos y dispara PE05.
+- `workflow-bridge`: recibe resultados de n8n y los entrega al callback seguro.
 - `cases`: consulta casos paginados y filtrados.
 - `dashboard`: carga el resumen operativo.
 - `notifications`: lista notificaciones y permite marcarlas como leídas.
@@ -60,9 +62,12 @@ SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
 N8N_WEBHOOK_URL=https://your-n8n-host
 N8N_API_URL=https://your-n8n-host/api/v1
 N8N_API_KEY=your_n8n_api_key
+N8N_INGRESS_SECRET=your_ingress_secret
 N8N_WEBHOOK_SECRET=your_callback_secret
 FRONTEND_ORIGIN=https://your-frontend-domain
 ```
+# n8n
+```PROLOGISTICA_EDGE_FUNCTION_URL=https://<supabase-project>.supabase.co/functions/v1```
 
 ## Desarrollo local
 
@@ -98,6 +103,8 @@ Desde un entorno autenticado con Supabase CLI:
 ```bash
 supabase functions deploy actions
 supabase functions deploy assistant
+supabase functions deploy case-messages
+supabase functions deploy workflow-bridge
 supabase functions deploy cases
 supabase functions deploy dashboard
 supabase functions deploy notifications
