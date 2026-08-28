@@ -34,8 +34,10 @@ Next.js no contiene Route Handlers, Server Actions ni secretos de backend.
 
 - `actions`: crea acciones idempotentes y dispara n8n.
 - `assistant`: procesa mensajes del Command Center.
-- `case-messages`: procesa conversaciones de los casos y dispara PE05.
+- `case-messages`: procesa conversaciones de los casos y dispara PE13.
 - `workflow-bridge`: recibe resultados de n8n y los entrega al callback seguro.
+- `PE13`: orquesta conversaciones de casos sin reemplazar PE05 (Sent Watcher).
+- `authority_decisions` y `commands`: persisten la decisión del motor y los comandos autorizados.
 - `cases`: consulta casos paginados y filtrados.
 - `dashboard`: carga el resumen operativo.
 - `notifications`: lista notificaciones y permite marcarlas como leídas.

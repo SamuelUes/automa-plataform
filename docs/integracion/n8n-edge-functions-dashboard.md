@@ -67,7 +67,7 @@ Nueva función para el chat de `src/app/(dashboard)/cases/[id]/page.tsx`.
 3. Crea la conversación si no existe.
 4. Inserta el mensaje humano.
 5. Crea una ejecución y la relaciona con el mensaje.
-6. Envía PE05 al webhook central.
+6. Solicita decisión al motor mediante PE02 y, si corresponde, envía un comando autorizado a PE13.
 7. Devuelve `conversation_id`, `message_id` y `workflow_execution_id`.
 8. Si n8n falla, marca la ejecución como `failed`; no inventa una respuesta de IA.
 
@@ -192,9 +192,9 @@ Lee el historial y guarda un borrador IA. No marca correo como enviado.
 
 Valida usuario/departamento de la organización, actualiza el caso, crea delegación y mensaje de sistema.
 
-### PE05 — Conversación de caso
+### PE05 — Sent Watcher
 
-Usa `case_id`, `conversation_id` y `source_message_id`. Lee el hilo, genera respuesta, guarda mensaje IA y actualiza la conversación.
+Conserva su responsabilidad original: observar mensajes enviados y registrar el estado de salida. El chat de casos se procesa mediante PE13, después de la decisión correspondiente de PE02.
 
 ### PE06 — Seguimientos
 
@@ -247,7 +247,7 @@ Las claves nunca deben estar en `NEXT_PUBLIC_*`, en el frontend ni dentro de los
 2. Configurar secretos de Edge Functions y n8n.
 3. Desplegar `workflow-bridge`, `webhooks`, `case-messages`, `assistant` y `actions`.
 4. Importar los JSON en n8n y eliminar los nodos locales desconectados.
-5. Probar PE08 y PE05 con un caso de prueba.
+5. Probar PE08, PE02 y PE13 con un caso de prueba.
 6. Probar acciones PE02, PE04, PE06, PE07 y PE12.
 7. Probar PE01, PE09 y PE10 con referencias externas duplicadas.
 8. Activar PE11.

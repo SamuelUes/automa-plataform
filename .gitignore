@@ -76,3 +76,9 @@ migrations/
 config.toml
 
 flujos/
+!flujos/
+!flujos/*.json
+supabase/migrations/
+!supabase/migrations/*.sql
+
+superpowers/

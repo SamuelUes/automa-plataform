@@ -3,6 +3,19 @@ declare const Deno: { env: { get(name: string): string | undefined } };
 // @ts-expect-error Deno resolves URL imports at Edge Function runtime.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
+export type Decision = {
+  authorized: boolean;
+  action: string;
+  requires_approval: boolean;
+  reason: string;
+  rule?: string | null;
+  rule_version?: string | null;
+  playbook_version?: string | null;
+  evidence?: unknown[];
+  expected_version?: number | null;
+  command?: { type: string; payload: Record<string, unknown> } | null;
+};
+
 export type IntegrationEnvelope = {
   event_type: string;
   workflow_code: string;
@@ -16,6 +29,8 @@ export type IntegrationEnvelope = {
   source_message_id?: string | null;
   action_id?: string | null;
   workflow_execution_id?: string | null;
+  decision_id?: string | null;
+  command_id?: string | null;
   input_data?: Record<string, unknown>;
 };
 
@@ -52,6 +67,9 @@ export async function createExecution(admin: ReturnType<typeof createClient>, pa
     correlation_id: payload.correlation_id,
     idempotency_key: payload.idempotency_key,
     source_message_id: payload.source_message_id || null,
+    decision_id: payload.decision_id || null,
+    command_id: payload.command_id || null,
+    workflow_code: payload.workflow_code,
     input_data: payload,
   }).select("id").single();
   if (error) throw error;

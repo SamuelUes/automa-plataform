@@ -31,18 +31,19 @@ export default function AssistantPage() {
     try { 
       const { data, error } = await createClient().functions.invoke("assistant", { body: { content, conversation_id: conversationId } }); 
       if (error) throw error; 
-      if (data?.conversation_id) setConversationId(data.conversation_id); 
-      if (data?.message) setMessages((current) => [...current, { 
-        id: crypto.randomUUID(), 
-        role: "assistant", 
-        content: data.message.content, 
-        createdAt: "ahora", 
-        action: data.message.action ? { 
-          intent: data.message.action.intent, 
-          label: data.message.action.label, 
-          requiresConfirmation: Boolean(data.message.action.requiresConfirmation), 
-          caseId: data.message.action.case_id || undefined 
-        } : undefined 
+      if (data?.conversation_id) setConversationId(data.conversation_id);
+      const proposedAction = data?.message?.action || data?.decision?.action ? {
+        intent: data.message?.action?.intent || data.decision.action,
+        label: data.message?.action?.label || data.decision.reason,
+        requiresConfirmation: Boolean(data.message?.action?.requiresConfirmation || data.decision?.requires_approval),
+        caseId: data.message?.action?.case_id || data.decision?.case_id || undefined,
+      } : undefined;
+      if (data?.message || data?.decision) setMessages((current) => [...current, {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        content: data.message?.content || data.decision?.reason || "La solicitud requiere una decisión adicional.",
+        createdAt: "ahora",
+        action: proposedAction,
       }]); 
     } catch { 
       setMessages((current) => [...current, { 
@@ -60,7 +61,17 @@ export default function AssistantPage() {
     setConfirming(message.id); 
     setNotice(null); 
     try { 
-      await createAction(message.action.intent as any, 
+      const actionTypeMap: Record<string, string> = {
+        APPROVE_EMAIL: "approve_email",
+        REJECT_APPROVAL: "reject_approval",
+        DELEGATE_CASE: "delegate_case",
+        SEND_EMAIL: "send_email",
+        SCHEDULE_FOLLOW_UP: "schedule_follow_up",
+        RESOLVE_CASE: "resolve_case",
+        VERIFY_CASE: "verify_case",
+        CLOSE_CASE: "close_case",
+      };
+      await createAction((actionTypeMap[message.action.intent] || message.action.intent) as any,
         { case_id: message.action.caseId, conversation_id: conversationId, input_data: { source: "assistant_confirmation" } }); 
       setNotice("Acción creada y enviada a n8n para su procesamiento."); 
     } catch { 

@@ -1,0 +1,80 @@
+{
+  "id": "pulso-pe13-v1",
+  "name": "PULSO · PE13 · Case Conversation Orchestrator",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "prologistica-pe13",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "01130000-0000-4000-8000-000000000001",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const input = $input.first().json;\nif (!input.workflow_execution_id || input.workflow_code !== 'PE13' || !input.case_id || !input.conversation_id || !input.source_message_id) {\n  throw new Error('INVALID_CASE_CONVERSATION_COMMAND');\n}\nreturn [{ json: input }];"
+      },
+      "id": "01130000-0000-4000-8000-000000000002",
+      "name": "Validate PE13 command",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [240, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.PROLOGISTICA_EDGE_FUNCTION_URL + '/workflow-bridge' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-prologistica-secret",
+              "value": "={{ $env.N8N_INGRESS_SECRET }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ workflow_execution_id: $json.workflow_execution_id, workflow_code: 'PE13', organization_id: $json.organization_id, case_id: $json.case_id, conversation_id: $json.conversation_id, source_message_id: $json.source_message_id, status: 'success', idempotency_key: 'case-conversation:' + $json.source_message_id, output_data: { response: $json.input_data?.response || '', action: $json.input_data?.action || null }, error_data: {} }) }}",
+        "options": {}
+      },
+      "id": "01130000-0000-4000-8000-000000000003",
+      "name": "Persist PE13 result",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [500, 0]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ accepted: true, workflow_execution_id: $json.workflow_execution_id, workflow_code: 'PE13' }) }}",
+        "options": {}
+      },
+      "id": "01130000-0000-4000-8000-000000000004",
+      "name": "Respond accepted",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [760, 0]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [[{"node": "Validate PE13 command", "type": "main", "index": 0}]]
+    },
+    "Validate PE13 command": {
+      "main": [[{"node": "Persist PE13 result", "type": "main", "index": 0}]]
+    },
+    "Persist PE13 result": {
+      "main": [[{"node": "Respond accepted", "type": "main", "index": 0}]]
+    }
+  },
+  "settings": {},
+  "versionId": "pulso-pe13-v1"
+}

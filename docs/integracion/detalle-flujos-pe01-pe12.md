@@ -20,7 +20,7 @@ Los JSON de `flujos/` reciben un evento HTTP y no deben conectarse directamente 
 ```json
 {
   "event_type": "case_message",
-  "workflow_code": "PE05",
+  "workflow_code": "PE13",
   "request_id": "uuid",
   "correlation_id": "uuid",
   "idempotency_key": "case-message:uuid",
@@ -42,7 +42,7 @@ Los JSON de `flujos/` reciben un evento HTTP y no deben conectarse directamente 
   "workflow_execution_id": "uuid",
   "n8n_execution_id": "string",
   "organization_id": "uuid",
-  "workflow_code": "PE05",
+  "workflow_code": "PE13",
   "case_id": "uuid|null",
   "conversation_id": "uuid|null",
   "source_message_id": "uuid|null",
@@ -268,7 +268,7 @@ flowchart TD
 
 Nunca se debe aceptar `assigned_to` solo porque venga en el payload. Debe existir, pertenecer a la organización y ser elegible para recibir el caso.
 
-## PE05 — Conversación de caso
+## PE05 — Sent Watcher
 
 ### Propósito
 
@@ -303,7 +303,7 @@ Procesar los mensajes enviados desde `src/app/(dashboard)/cases/[id]/page.tsx` y
 sequenceDiagram
   participant D as cases/[id]
   participant E as case-messages
-  participant N as n8n PE05
+  participant N as n8n PE13
   participant B as workflow-bridge
   participant DB as Supabase
   D->>E: case_id + conversation_id + content
@@ -321,7 +321,7 @@ sequenceDiagram
 
 - La respuesta debe usar el mismo `case_id` y `conversation_id` del mensaje origen.
 - Si n8n falla, el mensaje humano permanece guardado y la ejecución queda `failed`.
-- PE05 no puede crear una nueva conversación para cada mensaje.
+- PE05 observa mensajes enviados; el chat de casos se procesa mediante PE13, que se ejecuta después de la decisión correspondiente de PE02.
 
 ## PE06 — Seguimientos y vencimientos
 
