@@ -6,16 +6,19 @@ import { createClient } from "@/lib/supabase/client";
 import { createAction, getOperationError } from "@/lib/actions";
 import { DelegationForm, type DelegationFormValues } from "@/components/dashboard/delegation-form";
 import { OperationDialog, OperationDialogContent, OperationDialogDescription, OperationDialogHeader, OperationDialogTitle } from "@/components/dashboard/operation-dialog";
-import { demoDelegations, type Delegation } from "@/lib/phase5-demo-data";
+import { type Delegation } from "@/lib/phase5-demo-data";
 import { formatRelativeTime } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { EmptyState, ErrorState, LoadingState } from "@/components/ui/states";
 import { BriefcaseBusiness, Check, MoreHorizontal, Plus } from "lucide-react";
 
 export default function DelegationsPage() {
-  const [delegations, setDelegations] = useState<Delegation[]>(demoDelegations);
+  const [delegations, setDelegations] = useState<Delegation[]>([]);
   const [processing, setProcessing] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [filter, setFilter] = useState<"active" | "completed">("active");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -26,18 +29,27 @@ export default function DelegationsPage() {
     catch (error) { toast.error(getOperationError(error)); }
     finally { setSaving(false); }
   }
-  useEffect(() => { (async () => { const { data } = await (createClient() as any).from("delegations").select("id,case_id,assigned_to,assigned_by,department_id,reason,status,created_at").order("created_at", { ascending: false }); 
-  if (data?.length) setDelegations(data.map((item: any) => ({ 
-    ...item, 
-    caseId: item.case_id, 
-    caseNumber: 0, 
-    title: "Caso delegado", 
-    assignee: "Responsable", 
-    department: "Departamento", 
-    delegatedBy: "Usuario", 
-    createdAt: item.created_at, 
-    status: item.status === "completed" ? "completed" : "active" 
-  }))); })(); }, []);
+  useEffect(() => { void (async () => {
+    const { data, error } = await (createClient() as any).from("delegations").select("id,case_id,assigned_to,assigned_by,department_id,reason,status,created_at,cases(case_number,title),users!delegations_assigned_to_fkey(full_name),departments(name)").order("created_at", { ascending: false });
+    setLoading(false);
+    setLoadError(Boolean(error));
+    setDelegations(data?.map((item: any) => {
+      const relatedCase = Array.isArray(item.cases) ? item.cases[0] : item.cases;
+      const assignee = Array.isArray(item.users) ? item.users[0] : item.users;
+      const department = Array.isArray(item.departments) ? item.departments[0] : item.departments;
+      return {
+        ...item,
+        caseId: item.case_id,
+        caseNumber: relatedCase?.case_number || 0,
+        title: relatedCase?.title || "Caso delegado",
+        assignee: assignee?.full_name || "Sin responsable",
+        department: department?.name || "Sin departamento",
+        delegatedBy: "Equipo de operaciones",
+        createdAt: item.created_at,
+        status: item.status === "completed" ? "completed" : "active",
+      };
+    }) ?? []);
+  })(); }, []);
   
   async function complete(item: Delegation) { setProcessing(item.id); 
     try { 
@@ -85,7 +97,10 @@ export default function DelegationsPage() {
             <span className="font-mono text-[10px] ml-1">{delegations.filter((item) => item.status === "completed").length}</span>
           </Button>
              </div>
-              <Card className="overflow-hidden">
+              {loading ? <Card><LoadingState compact label="Cargando delegaciones..." /></Card> : null}
+              {loadError ? <Card><ErrorState compact message="No pudimos cargar las delegaciones." /></Card> : null}
+              {!loading && !loadError && visible.length === 0 ? <Card><EmptyState compact title="Sin delegaciones" description="No hay delegaciones en esta vista." /></Card> : null}
+              <Card className={`hidden overflow-hidden md:block ${loading || loadError || visible.length === 0 ? "md:hidden" : ""}`}>
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead className="border-b bg-muted/30">
@@ -144,7 +159,7 @@ export default function DelegationsPage() {
                   </div>
                 </Card>
                 <div className="grid gap-3 md:grid-cols-3">
-                  {delegations.map((item) => (
+                  {visible.map((item) => (
                     <Card key={`reason-${item.id}`} className="md:hidden">
                       <CardContent className="p-4">
                         <div className="flex items-center gap-2">

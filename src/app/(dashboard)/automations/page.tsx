@@ -4,27 +4,33 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useRealtimeTable } from "@/lib/supabase/realtime";
-import { demoWorkflowDefinitions, type Workflow } from "@/lib/workflow-demo-data";
+import { type Workflow } from "@/lib/workflow-demo-data";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { EmptyState, ErrorState } from "@/components/ui/states";
 import { Activity, ArrowUpRight, CheckCircle2, Clock3, GitBranch, Loader2, MoreHorizontal, RefreshCw, Server, TriangleAlert, XCircle } from "lucide-react";
 
 export default function AutomationsPage() {
-  const [workflows, setWorkflows] = useState<Workflow[]>(demoWorkflowDefinitions);
+  const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [syncing, setSyncing] = useState(false);
+  const [loadError, setLoadError] = useState(false);
   const load = useCallback(async () => {
     setSyncing(true);
-    const { data } = await createClient().functions.invoke("workflows", { body: { operation: "list" } });
-    if (data?.data?.length) {
-      setWorkflows(data.data.map((item: Record<string, unknown>) => ({ ...item, id: String(item.id), code: String(item.code), name: String(item.name), description: String(item.description || ""), status: "success", lastRun: "sin datos", executions: "—", errors: 0, avgDuration: "—" })) as Workflow[]);
-    }
+    setLoadError(false);
+    const { data, error } = await createClient().functions.invoke("workflows", { body: { operation: "list" } });
+    setLoadError(Boolean(error));
+    setWorkflows(data?.data?.length ? data.data.map((item: Record<string, unknown>) => ({ ...item, id: String(item.id), code: String(item.code), name: String(item.name), description: String(item.description || ""), status: "success", lastRun: "Sin ejecuciones", executions: String(item.executions || 0), errors: Number(item.errors || 0), avgDuration: String(item.avg_duration || "Sin datos") })) as Workflow[] : []);
     setSyncing(false);
   }, []);
   useEffect(() => { void load(); }, [load]);
   const handleRealtime = useCallback(() => { void load(); }, [load]);
   useRealtimeTable("workflow_executions", handleRealtime);
   const operational = workflows.filter((workflow) => workflow.status === "success").length;
+  const totalExecutions = workflows.reduce((total, workflow) => {
+    const count = Number(workflow.executions);
+    return total + (Number.isFinite(count) ? count : 0);
+  }, 0);
 
   return (
   <div className="space-y-7">
@@ -34,8 +40,10 @@ export default function AutomationsPage() {
       <Stat icon={<Server />} value={<>{operational}
       <span className="text-sm font-normal text-muted-foreground">/{workflows.length}</span></>} label="Workflows operativos" />
       <Stat icon={<TriangleAlert />} value={workflows.reduce((sum, workflow) => sum + workflow.errors, 0)} label="Errores recientes" tone="warning" />
-      <Stat icon={<Activity />} value="7,557" label="Ejecuciones este mes" tone="info" />
+      <Stat icon={<Activity />} value={totalExecutions.toLocaleString("es-ES")} label="Ejecuciones registradas" tone="info" />
     </div>
+    {loadError ? <Card><ErrorState compact message="No pudimos sincronizar las automatizaciones." onRetry={() => void load()} /></Card> : null}
+    {!loadError && !syncing && workflows.length === 0 ? <Card><EmptyState compact title="Sin automatizaciones" description="No hay workflows configurados para esta organización." /></Card> : null}
     <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{workflows.map((workflow) => <Card key={workflow.id} className={`group hover:border-foreground/30 transition-colors ${workflow.status === "failed" ? "border-destructive/35" : ""}`}>
      <CardContent className="p-5">
       <div className="flex items-start justify-between">
@@ -71,7 +79,7 @@ function Stat({ icon, value, label, tone = "success" }: { icon: React.ReactNode;
 { 
   return <Card>
     <CardContent className="p-4 flex items-center gap-3">
-      <div className={`h-9 w-9 rounded-lg bg-${tone}/12 text-${tone} flex items-center justify-center`}>{icon}</div>
+      <div className={`flex h-9 w-9 items-center justify-center rounded-lg ${tone === "warning" ? "bg-warning/10 text-warning" : tone === "info" ? "bg-info/10 text-info" : "bg-success/10 text-success"}`}>{icon}</div>
       <div>
         <p className="text-2xl font-semibold">{value}</p>
         <p className="text-xs text-muted-foreground">{label}</p>

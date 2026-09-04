@@ -1,17 +1,21 @@
 "use client";
 
 import { FormEvent, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { createAction } from "@/lib/actions";
 import { loadConversationMessages } from "@/lib/conversations";
-import { initialAssistantMessages, type AssistantMessage } from "@/lib/assistant-demo-data";
+import { type AssistantMessage } from "@/lib/assistant-demo-data";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Bot, Check, Clock3, Command, FileCheck2, Loader2, MessageSquare, Plus, Send, ShieldCheck, Sparkles, UserRound, X } from "lucide-react";
 
+const welcomeMessages: AssistantMessage[] = [{ id: "welcome", role: "assistant", content: "Puedo ayudarte a consultar la operación y preparar acciones. Las acciones sensibles siempre requieren tu confirmación.", createdAt: "ahora" }];
+const quickCommands = ["¿Qué requiere mi atención?", "Muéstrame los seguimientos vencidos", "Resume los casos urgentes"];
+
 export default function AssistantPage() {
-  const [messages, setMessages] = useState<AssistantMessage[]>(initialAssistantMessages);
+  const [messages, setMessages] = useState<AssistantMessage[]>(welcomeMessages);
   const [input, setInput] = useState("");
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
@@ -88,7 +92,7 @@ export default function AssistantPage() {
         <h1 className="text-3xl font-semibold tracking-[-.04em]">AI Command Center</h1>
         <p className="text-muted-foreground mt-1.5">Tu contexto operativo, disponible para conversar y actuar.</p>
       </div>
-      <Button variant="outline" onClick={() => setMessages(initialAssistantMessages)}><Plus />Nueva conversación</Button>
+      <Button variant="outline" onClick={() => { setMessages(welcomeMessages); setConversationId(null); setNotice(null); }}><Plus />Nueva conversación</Button>
     </div>
     <Card className="flex-1 min-h-0 overflow-hidden grid lg:grid-cols-[1fr_260px]">
       <div className="flex min-h-0 flex-col">
@@ -147,6 +151,9 @@ export default function AssistantPage() {
                 <div ref={bottomRef} />
               </div>
               <div className="border-t p-4 sm:px-8">
+                <div className="mb-3 flex gap-2 overflow-x-auto pb-1">
+                  {quickCommands.map((command) => <Button key={command} type="button" variant="outline" size="sm" className="shrink-0" onClick={() => setInput(command)}>{command}</Button>)}
+                </div>
                 <form onSubmit={sendMessage} className="flex items-end gap-2">
                   <textarea 
                     value={input} 
@@ -180,22 +187,18 @@ export default function AssistantPage() {
               <p className="text-[10px] uppercase tracking-[.15em] text-muted-foreground mb-4">Contexto disponible</p>
               <div className="space-y-2">
                 {[
-                  ["Casos", "24 activos", MessageSquare],
-                  ["Aprobaciones", "3 pendientes", FileCheck2],
-                  ["Seguimientos", "7 abiertos", Clock3],
-                  ["Automatizaciones", "11 operativas", Sparkles]
-                ].map(([label, value, Icon]) => (
-                  <div key={label as string} className="rounded-lg border bg-background p-3">
-                    <div className="flex items-center gap-2">
-                      <span className="h-6 w-6 rounded-md bg-muted flex items-center justify-center">
-                        <Icon className="h-3.5 w-3.5 text-muted-foreground" />
-                      </span>
-                      <div>
-                        <p className="text-xs font-medium">{label as string}</p>
-                        <p className="text-[10px] text-muted-foreground">{value as string}</p>
-                      </div>
-                    </div>
-                  </div>
+                  ["Casos", "/cases", MessageSquare],
+                  ["Aprobaciones", "/approvals", FileCheck2],
+                  ["Seguimientos", "/follow-ups", Clock3],
+                  ["Automatizaciones", "/automations", Sparkles]
+                ].map(([label, href, Icon]) => (
+                  <Link key={label as string} href={href as string} className="flex min-h-11 items-center gap-2 rounded-lg border bg-background p-3 transition-colors hover:bg-muted/40">
+                    <span className="flex h-6 w-6 items-center justify-center rounded-md bg-muted">
+                      <Icon className="h-3.5 w-3.5 text-muted-foreground" />
+                    </span>
+                    <span className="text-xs font-medium">{label as string}</span>
+                    <span className="ml-auto text-[10px] text-muted-foreground">Abrir</span>
+                  </Link>
                 ))}
               </div>
               <div className="mt-8 rounded-lg border bg-background p-3">

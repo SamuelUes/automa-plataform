@@ -82,3 +82,4 @@ supabase/migrations/
 !supabase/migrations/*.sql
 
 superpowers/
+docs/

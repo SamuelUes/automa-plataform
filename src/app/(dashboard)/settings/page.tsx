@@ -290,8 +290,8 @@ export default function SettingsPage() {
         </p>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-[230px_1fr]">
-        <nav className="space-y-1">
+      <div className="grid min-w-0 gap-6 lg:grid-cols-[230px_1fr]">
+        <nav className="flex min-w-0 gap-1 overflow-x-auto pb-1 lg:block lg:space-y-1 lg:overflow-visible lg:pb-0">
           {sections.map(({ id, label, icon: Icon }) => (
             <button
               key={id}
@@ -299,7 +299,7 @@ export default function SettingsPage() {
                 setSection(id);
                 setMessage(null);
               }}
-              className={`w-full flex items-center gap-3 rounded-md px-3 py-2.5 text-left text-sm transition-colors ${
+              className={`flex min-w-max shrink-0 items-center gap-3 rounded-md px-3 py-2.5 text-left text-sm transition-colors lg:w-full ${
                 section === id
                   ? "bg-muted font-medium"
                   : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
@@ -488,7 +488,7 @@ function ProfileSection({
             <Badge variant="info">{role}</Badge>
           </div>
 
-          <Button onClick={onSave} disabled={saving}>
+          <Button onClick={onSave} disabled={saving} className="w-full sm:w-fit">
             {saving ? <Loader2 className="animate-spin" /> : <Save />}
             Guardar cambios
           </Button>
@@ -522,7 +522,7 @@ function OrganizationSection({
       />
 
       <Card>
-        <CardContent className="p-6 space-y-5">
+        <CardContent className="space-y-5 p-4 sm:p-6">
           <div className="space-y-2">
             <Label htmlFor="org-name">Nombre de la organización</Label>
             <Input
@@ -554,7 +554,7 @@ function OrganizationSection({
             </div>
           </div>
 
-          <Button onClick={onSave} disabled={saving}>
+          <Button onClick={onSave} disabled={saving} className="w-full sm:w-fit">
             {saving ? <Loader2 className="animate-spin" /> : <Save />}
             Guardar organización
           </Button>
@@ -601,9 +601,9 @@ function UsersSection({
                     .slice(0, 2)}
                 </div>
 
-                <div className="flex-1">
-                  <p className="text-sm font-medium">{user.full_name}</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium">{user.full_name}</p>
+                  <p className="mt-0.5 truncate text-xs text-muted-foreground">
                     {user.email}
                   </p>
                 </div>
@@ -618,7 +618,7 @@ function UsersSection({
                   onChange={(event) =>
                     onRoleChange(user.id, event.target.value)
                   }
-                  className="h-9 rounded-md border bg-background px-3 text-xs"
+                  className="h-9 w-full rounded-md border bg-background px-3 text-xs sm:w-auto"
                 >
                   <option value="owner">Owner</option>
                   <option value="admin">Admin</option>
@@ -686,13 +686,13 @@ function DepartmentsSection({
             {departments.map((department) => (
               <div
                 key={department.id}
-                className="flex items-center gap-3 px-5 py-4"
+                className="flex flex-col items-start gap-3 px-4 py-4 sm:flex-row sm:items-center sm:px-5"
               >
-                <div className="h-8 w-8 rounded-lg bg-muted flex items-center justify-center">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted">
                   <Users className="h-4 w-4 text-muted-foreground" />
                 </div>
 
-                <div className="flex-1">
+                <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium">{department.name}</p>
                   <p className="text-xs text-muted-foreground mt-0.5">
                     {department.description || "Sin descripción"}
@@ -724,7 +724,7 @@ function DepartmentsSection({
               />
             </div>
 
-            <Button onClick={onAdd} disabled={saving || !name.trim()}>
+            <Button className="w-full sm:w-fit" onClick={onAdd} disabled={saving || !name.trim()}>
               {saving ? <Loader2 className="animate-spin" /> : <Plus />}
               Añadir departamento
             </Button>
@@ -802,7 +802,7 @@ function NotificationsSection({
         </CardContent>
       </Card>
 
-      <Button onClick={onSave} disabled={saving} className="mt-4">
+      <Button onClick={onSave} disabled={saving} className="mt-4 w-full sm:w-fit">
         {saving ? <Loader2 className="animate-spin" /> : <Save />}
         Guardar preferencias
       </Button>
@@ -820,7 +820,7 @@ function AISection() {
       />
 
       <Card>
-        <CardContent className="p-6 space-y-5">
+        <CardContent className="space-y-5 p-4 sm:p-6">
           <div className="flex items-center justify-between rounded-lg border p-4">
             <div className="flex items-center gap-3">
               <div className="h-9 w-9 rounded-lg bg-[#d7e7e2] text-[#28584e] flex items-center justify-center">
@@ -889,7 +889,7 @@ function AutomationSection() {
       />
 
       <Card>
-        <CardContent className="p-6 space-y-4">
+        <CardContent className="space-y-4 p-4 sm:p-6">
           {settings.map(([title, description]) => (
             <div
               key={title}
@@ -916,6 +916,44 @@ function AutomationSection() {
 }
 
 function SecuritySection() {
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [changingPassword, setChangingPassword] = useState(false);
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [passwordSuccess, setPasswordSuccess] = useState(false);
+
+  async function changePassword() {
+    setPasswordError(null);
+    setPasswordSuccess(false);
+
+    if (newPassword.length < 8) {
+      setPasswordError("La contraseña debe tener al menos 8 caracteres.");
+      return;
+    }
+
+    if (newPassword !== confirmPassword) {
+      setPasswordError("Las contraseñas no coinciden.");
+      return;
+    }
+
+    setChangingPassword(true);
+
+    const { error: updateError } = await createClient().auth.updateUser({
+      password: newPassword,
+    });
+
+    setChangingPassword(false);
+
+    if (updateError) {
+      setPasswordError(updateError.message);
+      return;
+    }
+
+    setPasswordSuccess(true);
+    setNewPassword("");
+    setConfirmPassword("");
+  }
+
   return (
     <>
       <SectionHeading
@@ -923,6 +961,56 @@ function SecuritySection() {
         title="Seguridad"
         description="Revisa las capas que protegen tu organización y tus datos."
       />
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-sm">Cambiar contraseña</CardTitle>
+        </CardHeader>
+
+        <CardContent className="space-y-5">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="new-password">Nueva contraseña</Label>
+              <Input
+                id="new-password"
+                type="password"
+                value={newPassword}
+                onChange={(event) => setNewPassword(event.target.value)}
+                autoComplete="new-password"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="confirm-password">Confirmar contraseña</Label>
+              <Input
+                id="confirm-password"
+                type="password"
+                value={confirmPassword}
+                onChange={(event) => setConfirmPassword(event.target.value)}
+                autoComplete="new-password"
+              />
+            </div>
+          </div>
+
+          {passwordError && (
+            <p className="text-sm text-destructive bg-destructive/10 rounded-md px-3 py-2">
+              {passwordError}
+            </p>
+          )}
+
+          {passwordSuccess && (
+            <p className="flex items-center gap-2 text-sm text-success">
+              <Check className="h-4 w-4" />
+              Contraseña actualizada correctamente.
+            </p>
+          )}
+
+          <Button className="w-full sm:w-fit" onClick={changePassword} disabled={changingPassword}>
+            {changingPassword ? <Loader2 className="animate-spin" /> : <KeyRound />}
+            Actualizar contraseña
+          </Button>
+        </CardContent>
+      </Card>
 
       <div className="grid gap-3 sm:grid-cols-2">
         <SecurityCard

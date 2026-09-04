@@ -3,29 +3,40 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useRealtimeTable } from "@/lib/supabase/realtime";
-import { demoActivity, type Activity } from "@/lib/phase5-demo-data";
+import { type Activity } from "@/lib/phase5-demo-data";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { EmptyState, ErrorState, LoadingState } from "@/components/ui/states";
 import { Activity as ActivityIcon, CalendarDays, ChevronDown, FileCheck2, Mail, Search, Send, Users, XCircle, Zap } from "lucide-react";
 
 const iconFor = (event: string) => event.includes("Workflow") ? XCircle : event.includes("Aprobación") ? FileCheck2 : event.includes("email") ? Send : event.includes("Cliente") ? Mail : event.includes("delegado") ? Users : Zap;
+const toneFor = (event: string): Activity["tone"] => /error|failed|rechaz/i.test(event) ? "danger" : /approval|aprobación|waiting|deleg/i.test(event) ? "warning" : /sent|complete|resolv|closed|cread/i.test(event) ? "success" : "info";
 export default function ActivityPage() {
-  const [items, setItems] = useState<Activity[]>(demoActivity);
+  const [items, setItems] = useState<Activity[]>([]);
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [dateOpen, setDateOpen] = useState(false);
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
-  const load = useCallback(async () => { const { data } = await (createClient() as any).from("audit_logs").select("id,event_type,user_id,case_id,entity_type,created_at,metadata,new_data").order("created_at", { ascending: false }).limit(50); if (data?.length) setItems(data.map((item: any) => ({ 
-    id: item.id, 
-    event: item.event_type, 
-    actor: "Usuario del equipo", 
-    detail: item.case_id ? `Caso ${item.case_id}` : "Actividad del sistema", 
-    time: new Date(item.created_at).toLocaleString("es-ES", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }),
-    createdAt: item.created_at,
-    tone: "info" 
-  }))); }, []);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
+  const load = useCallback(async () => {
+    setLoadError(false);
+    const { data, error } = await (createClient() as any).from("audit_logs").select("id,event_type,user_id,case_id,entity_type,created_at,metadata,new_data").order("created_at", { ascending: false }).limit(50);
+    setLoading(false);
+    setLoadError(Boolean(error));
+    setItems(data?.map((item: any) => ({
+      id: item.id,
+      event: item.event_type,
+      actor: item.user_id ? "Usuario del equipo" : "Sistema",
+      detail: item.case_id ? `Caso ${item.case_id}` : item.entity_type || "Actividad del sistema",
+      time: new Date(item.created_at).toLocaleString("es-ES", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }),
+      createdAt: item.created_at,
+      tone: toneFor(item.event_type),
+    })) ?? []);
+  }, []);
 
   useEffect(() => { void load(); }, [load]);
   useRealtimeTable("audit_logs", load);
@@ -50,7 +61,7 @@ export default function ActivityPage() {
       <div className="flex flex-col md:flex-row gap-3">
         <div className="relative flex-1 max-w-md">
           <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-          <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar en actividad..." className="h-9 w-full rounded-md border bg-background pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-ring" />
+          <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar en actividad..." className="pl-9" aria-label="Buscar en actividad" />
         </div>
         <div className="flex flex-wrap gap-2">
           {[["all", "Todos"], ["success", "Éxito"], ["info", "Operativo"], ["warning", "Revisión"], ["danger", "Errores"]].map(([key, label]) => <Button key={key} size="sm" variant={filter === key ? "secondary" : "outline"} onClick={() => setFilter(key)}>{label}</Button>)}
@@ -79,7 +90,9 @@ export default function ActivityPage() {
               <span className="h-1.5 w-1.5 rounded-full bg-success mr-1.5" />Audit log activo
             </Badge>
           </div>
-          <div className="divide-y">
+          {loading ? <LoadingState compact label="Cargando actividad..." /> : null}
+          {loadError ? <ErrorState compact message="No pudimos cargar el registro de actividad." onRetry={() => void load()} /> : null}
+          <div className={loading || loadError ? "hidden" : "divide-y"}>
             {visible.map((item) => {
               const Icon = iconFor(item.event);
               return (
@@ -99,7 +112,7 @@ export default function ActivityPage() {
               );
             })}
           </div>
-          {visible.length === 0 && <div className="py-16 text-center text-sm text-muted-foreground">No encontramos actividad con esos filtros.</div>}
+          {!loading && !loadError && visible.length === 0 ? <EmptyState compact title="Sin actividad" description="No encontramos eventos con los filtros seleccionados." /> : null}
         </CardContent>
       </Card>
     </div>

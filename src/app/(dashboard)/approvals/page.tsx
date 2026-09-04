@@ -8,28 +8,41 @@ import { formatRelativeTime } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Check, CheckCircle2, FileCheck2, Mail, MoreHorizontal, Pencil, ShieldAlert, Sparkles, X } from "lucide-react";
+import { EmptyState, ErrorState, LoadingState } from "@/components/ui/states";
+import { ArrowUpRight, Check, CheckCircle2, FileCheck2, Mail, MoreHorizontal, Pencil, ShieldAlert, Sparkles, X } from "lucide-react";
 
 type Approval = { id: string; caseId: string; caseNumber: number; title: string; company: string; requestedAt: string; draft: string; reason: string; priority: "urgent" | "high"; status: "pending" | "approved" | "rejected" };
-const initialApprovals: Approval[] = [{ id: "approval-184", caseId: "demo-184", caseNumber: 184, title: "Respuesta a propuesta comercial", company: "ABC Corporation", requestedAt: new Date(Date.now() - 12 * 60000).toISOString(), draft: "Estimada Mariana,\n\nGracias por compartir la propuesta. Confirmamos que podemos autorizar el monto de $12,500 bajo las condiciones indicadas. Nuestro equipo dará seguimiento a los siguientes pasos.", reason: "La respuesta contiene una autorización comercial y requiere validación humana antes del envío.", priority: "urgent", status: "pending" }, { id: "approval-181", caseId: "demo-181", caseNumber: 181, title: "Confirmación de contrato marco", company: "Vértice SA", requestedAt: new Date(Date.now() - 2 * 3600000).toISOString(), draft: "Hola Andrés,\n\nHemos revisado la última versión del contrato marco y confirmamos que está lista para firma.", reason: "El documento fue revisado por el agente y está listo para confirmación.", priority: "high", status: "pending" }, { id: "approval-180", caseId: "demo-180", caseNumber: 180, title: "Respuesta sobre datos fiscales", company: "Atlas Trading", requestedAt: new Date(Date.now() - 5 * 3600000).toISOString(), draft: "Hola Lucía,\n\nHemos recibido correctamente los documentos fiscales. Procederemos con la actualización de la cuenta.", reason: "La respuesta modifica información de cuenta del cliente.", priority: "high", status: "pending" }];
 
 export default function ApprovalsPage() {
-  const [approvals, setApprovals] = useState(initialApprovals);
-  const [selectedId, setSelectedId] = useState(initialApprovals[0].id);
+  const [approvals, setApprovals] = useState<Approval[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [processing, setProcessing] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
-  useEffect(() => { (async () => { const { data } = await (createClient() as any).from("approvals").select("id,case_id,status,requested_at,decision,comment").eq("status", "pending").order("requested_at", { ascending: true }); if (data?.length) setApprovals(data.map((row: any) => 
-    ({ id: row.id, 
-      caseId: row.case_id, 
-      caseNumber: 0, 
-      title: "Aprobación pendiente", 
-      company: "Cliente", 
-      requestedAt: row.requested_at, 
-      draft: "Borrador disponible en el correo relacionado.", 
-      reason: "Requiere validación humana.", 
-      priority: "high", 
-      status: "pending" 
-    }))); })(); }, []);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
+  useEffect(() => { void (async () => {
+    const { data, error } = await (createClient() as any).from("approvals").select("id,case_id,status,requested_at,decision,comment,cases(case_number,title,priority,contacts(company))").eq("status", "pending").order("requested_at", { ascending: true });
+    setLoading(false);
+    setLoadError(Boolean(error));
+    const next = data?.map((row: any) => {
+      const relatedCase = Array.isArray(row.cases) ? row.cases[0] : row.cases;
+      const contact = Array.isArray(relatedCase?.contacts) ? relatedCase.contacts[0] : relatedCase?.contacts;
+      return {
+        id: row.id,
+        caseId: row.case_id,
+        caseNumber: relatedCase?.case_number || 0,
+        title: relatedCase?.title || "Aprobación pendiente",
+        company: contact?.company || "Cliente sin empresa",
+        requestedAt: row.requested_at,
+        draft: typeof row.decision === "object" && row.decision?.draft ? String(row.decision.draft) : "Consulta el caso relacionado para revisar el contenido propuesto.",
+        reason: row.comment || "Esta acción requiere validación humana.",
+        priority: relatedCase?.priority === "urgent" ? "urgent" : "high",
+        status: "pending" as const,
+      };
+    }) ?? [];
+    setApprovals(next);
+    setSelectedId(next[0]?.id ?? null);
+  })(); }, []);
 
   const selected = approvals.find((approval) => approval.id === selectedId) || approvals[0];
   async function decide(approval: Approval, decision: "approve_email" | "reject_approval") {
@@ -58,7 +71,10 @@ export default function ApprovalsPage() {
           {approvals.filter((a) => a.status === "pending").length} requieren tu atención
         </Badge>
       </div>
-      <div className="grid gap-6 xl:grid-cols-[1fr_390px]">
+      {loading ? <Card><LoadingState label="Cargando aprobaciones..." /></Card> : null}
+      {loadError ? <Card><ErrorState message="No pudimos cargar la cola de aprobaciones." /></Card> : null}
+      {!loading && !loadError && approvals.length === 0 ? <Card><EmptyState title="Sin aprobaciones pendientes" description="No hay decisiones que requieran atención humana en este momento." /></Card> : null}
+      <div className={`grid gap-6 xl:grid-cols-[1fr_390px] ${loading || loadError || approvals.length === 0 ? "hidden" : ""}`}>
         <div className="space-y-3">{approvals.map((approval) => 
           <Card key={approval.id} className={`transition-colors ${selected?.id === approval.id ? "border-foreground/35" : ""} ${approval.status !== "pending" ? "opacity-65" : ""}`}>
             <CardContent className="p-5">
@@ -82,7 +98,7 @@ export default function ApprovalsPage() {
                 <MoreHorizontal className="h-4 w-4 text-muted-foreground" />
               </button>
               </div>
-              <div className="mt-5 rounded-md bg-muted/40 border-l-2 border-warning/50 p-3">
+              <div className="mt-5 rounded-md border border-warning/20 bg-warning/5 p-3">
                 <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">Motivo del agente</p>
                   <p className="text-xs leading-relaxed">{approval.reason}</p>
               </div>
@@ -127,7 +143,7 @@ export default function ApprovalsPage() {
                           </Button>
                           <Link href={`/cases/${selected.caseId}`} className="flex-1">
                             <Button variant="outline" className="w-full">
-                              <ArrowUpRightIcon />Ver caso
+                              <ArrowUpRight />Ver caso
                             </Button>
                           </Link>
                         </div>
@@ -144,5 +160,3 @@ export default function ApprovalsPage() {
               </div>
   );
 }
-
-function ArrowUpRightIcon() { return <span className="text-sm">↗</span>; }
