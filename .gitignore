@@ -69,16 +69,16 @@ desktop.ini
 .claude/
 .agents/
 
-migrations/
+# migrations/
 config.toml
 
-migrations/
+# migrations/
 config.toml
 
 flujos/
 !flujos/
 !flujos/*.json
-supabase/migrations/
-!supabase/migrations/*.sql
+# supabase/migrations/
+# !supabase/migrations/*.sql
 
 superpowers/
