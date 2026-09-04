@@ -14,12 +14,16 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { EmptyState } from "@/components/ui/states";
 import { PriorityBadge } from "@/components/cases/status-badge";
-import { Archive, ArrowUpRight, FileCheck2, Inbox, Mail, MoreHorizontal, Paperclip, Reply, Search, SlidersHorizontal, Star } from "lucide-react";
+import { Archive, ArrowUpRight, ChevronLeft, FileCheck2, Inbox, Mail, MoreHorizontal, Paperclip, Reply, Search, SlidersHorizontal, Star } from "lucide-react";
+
+const demoMode = process.env.NEXT_PUBLIC_DEMO_MODE === "true";
 
 export default function EmailsPage() {
-  const [emails, setEmails] = useState<DemoEmail[]>(demoEmails);
-  const [selectedId, setSelectedId] = useState(demoEmails[0].id);
+  const [emails, setEmails] = useState<DemoEmail[]>(demoMode ? demoEmails : []);
+  const [selectedId, setSelectedId] = useState(demoMode ? demoEmails[0].id : "");
+  const [mobilePanel, setMobilePanel] = useState<"inbox" | "detail">("inbox");
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [composeOpen, setComposeOpen] = useState(false);
@@ -112,7 +116,7 @@ export default function EmailsPage() {
           </Button>
             </div>
             <div className="flex flex-col sm:flex-row gap-3">
-              <div className="relative flex-1 max-w-md">
+              <div className="relative w-full min-w-0 sm:max-w-md sm:flex-1">
                 <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
                 <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar en correos..." className="pl-9" />
               </div>
@@ -132,13 +136,13 @@ export default function EmailsPage() {
             </div>
             
     <Card className="overflow-hidden min-h-[calc(100vh-120px)]">
-      <div className="grid lg:grid-cols-[300px_1fr_285px] divide-x">
-        <div className="lg:h-[calc(100vh-120px)] overflow-y-auto scrollbar-thin">
+      <div className="grid min-w-0 grid-cols-1 divide-x md:grid-cols-[minmax(260px,300px)_minmax(0,1fr)]">
+        <div className={`min-w-0 overflow-y-auto scrollbar-thin md:block md:h-[calc(100vh-120px)] ${mobilePanel === "inbox" ? "block" : "hidden"}`}>
           <div className="h-12 px-4 border-b flex items-center justify-between">
             <span className="text-xs font-semibold">Bandeja de entrada</span>
             <span className="text-[11px] text-muted-foreground">{visible.length} mensajes</span>
             </div>{visible.map((email) => 
-            <button key={email.id} onClick={() => setSelectedId(email.id)} className={`w-full text-left p-4 border-b transition-colors ${selected?.id === email.id ? "bg-muted/55 border-l-2 border-l-foreground" : "hover:bg-muted/30"}`}>
+            <button key={email.id} onClick={() => { setSelectedId(email.id); setMobilePanel("detail"); }} className={`w-full text-left p-4 border-b transition-colors ${selected?.id === email.id ? "bg-muted/55 border-l-2 border-l-foreground" : "hover:bg-muted/30"}`}>
               <div className="flex items-start gap-2">
                 <PriorityBadge priority={email.priority} />
                 <span className="ml-auto text-[10px] text-muted-foreground">{formatRelativeTime(email.receivedAt)}
@@ -149,11 +153,15 @@ export default function EmailsPage() {
                   <p className="text-[11px] text-muted-foreground mt-1.5 line-clamp-1">{email.preview}</p>{email.requiresApproval && 
                   <Badge variant="warning" className="mt-3">
                     <FileCheck2 className="h-3 w-3 mr-1" />Aprobación</Badge>}</button>)}
+                    {visible.length === 0 ? <EmptyState compact title="Sin correos" description="No hay mensajes que coincidan con los filtros seleccionados." /> : null}
                     </div>{selected && (
-                      <div className="lg:h-162.5 overflow-y-auto scrollbar-thin">
-                      <div className="h-12 px-5 border-b flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs font-mono text-muted-foreground">CASO #{selected.caseNumber}</span>
+                      <div className={`min-w-0 overflow-y-auto scrollbar-thin md:block md:h-162.5 ${mobilePanel === "detail" ? "block" : "hidden"}`}>
+                      <div className="flex min-h-12 items-center justify-between gap-2 border-b px-3 sm:px-5">
+                        <div className="flex min-w-0 items-center gap-2">
+                          <Button variant="ghost" size="sm" className="shrink-0 md:hidden" onClick={() => setMobilePanel("inbox")}>
+                            <ChevronLeft />Bandeja
+                          </Button>
+                          <span className="truncate text-xs font-mono text-muted-foreground">CASO #{selected.caseNumber}</span>
                           <Link href={`/cases/demo-${selected.caseNumber}`} className="text-xs text-muted-foreground hover:text-foreground flex items-center">Ver caso <ArrowUpRight className="h-3 w-3 ml-1" />
                           </Link>
                           </div>
@@ -168,8 +176,8 @@ export default function EmailsPage() {
                             </Button>
                           </div>
                           </div>
-                          <div className="p-5 sm:p-8">
-                            <div className="flex items-start justify-between gap-4">
+                          <div className="min-w-0 p-5 sm:p-8">
+                            <div className="flex min-w-0 items-start justify-between gap-4">
                               <div>
                                 <div className="flex items-center gap-2 mb-3">
                                   <PriorityBadge priority={selected.priority} />
@@ -188,10 +196,16 @@ export default function EmailsPage() {
                               <span className="ml-auto text-[11px] text-muted-foreground">Para tu cuenta</span>
                             </div>
                             <div className="py-7 text-sm leading-7 whitespace-pre-line">{selected.body}</div>
-                            <div className="border-t pt-5 flex flex-wrap gap-2">
-                              <Button onClick={() => { setComposeMode("reply"); setComposeOpen(true); }}><Reply />Responder</Button>
-                              <Button variant="outline" type="button" disabled title="Adjuntos aún no están configurados"><Paperclip />Adjuntar</Button>
-                              <Button variant="outline" onClick={() => { setComposeMode("forward"); setComposeOpen(true); }}>Reenviar</Button>
+                            <div className="flex flex-wrap gap-2 border-t pt-5">
+                              <Button className="w-full sm:w-fit" onClick={() => { setComposeMode("reply"); setComposeOpen(true); }}><Reply />
+                                Responder
+                              </Button>
+                              <Button variant="outline" type="button" disabled title="Adjuntos aún no están configurados"><Paperclip />
+                                Adjuntar
+                              </Button>
+                              <Button variant="outline" onClick={() => { setComposeMode("forward"); setComposeOpen(true); }}>
+                                Reenviar
+                              </Button>
                             </div>
                           </div>
                         </div>)}

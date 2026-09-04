@@ -1,12 +1,13 @@
 import Link from "next/link";
 import { ArrowUpRight, ChevronRight, Clock3, FileCheck2, Inbox, MoreHorizontal, OctagonAlert, RefreshCw, Sparkles, Workflow } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
-import { demoCases, workflows } from "@/lib/demo-data";
+import { type DemoCase } from "@/lib/demo-data";
 import { formatRelativeTime, getGreeting } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { PriorityBadge, CaseStatusBadge } from "@/components/cases/status-badge";
+import { EmptyState } from "@/components/ui/states";
 
 async function getCurrentUserName() {
   const supabase = await createClient();
@@ -25,31 +26,59 @@ async function getCurrentUserName() {
   return profile?.full_name || user.user_metadata?.full_name || user.email?.split("@")[0] || "Usuario";
 }
 
-async function getCases() {
+async function getCases(): Promise<DemoCase[]> {
   try {
     const supabase = await createClient();
     const { data } = await supabase.from("cases").select("id,case_number,title,description,status,priority,updated_at,created_at,requires_approval,requires_human,contacts(name,company),departments(name)").order("updated_at", { ascending: false }).limit(8);
-    return data && data.length ? data : demoCases;
-  } catch { return demoCases; }
+    return (data ?? []) as unknown as DemoCase[];
+  } catch { return []; }
+}
+
+type WorkflowSummary = { id: string; code: string; name: string; is_active: boolean };
+
+async function getDashboardSummary() {
+  const supabase = await createClient();
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const [emails, activeCases, approvals, followUps] = await Promise.all([
+    supabase.from("emails").select("id", { count: "exact", head: true }).gte("created_at", today.toISOString()),
+    supabase.from("cases").select("id", { count: "exact", head: true }).not("status", "in", "(resolved,closed,cancelled)"),
+    supabase.from("approvals").select("id", { count: "exact", head: true }).eq("status", "pending"),
+    supabase.from("follow_ups").select("id", { count: "exact", head: true }).neq("status", "completed"),
+  ]);
+  return {
+    emailsProcessed: emails.count ?? 0,
+    activeCases: activeCases.count ?? 0,
+    pendingApprovals: approvals.count ?? 0,
+    openFollowUps: followUps.count ?? 0,
+  };
+}
+
+async function getWorkflowSummaries(): Promise<WorkflowSummary[]> {
+  const supabase = await createClient();
+  const { data } = await supabase.from("workflow_definitions").select("id,code,name,is_active").order("code").limit(12);
+  return (data ?? []) as unknown as WorkflowSummary[];
 }
 
 export default async function DashboardPage() {
-  const [cases, userName] = await Promise.all([
+  const [cases, userName, summary, workflowSummaries] = await Promise.all([
     getCases(),
     getCurrentUserName(),
+    getDashboardSummary(),
+    getWorkflowSummaries(),
   ]);
   const attention = cases.filter((c) => ["waiting_approval", "waiting_human", "waiting_verification", "follow_up"].includes(c.status as string)).slice(0, 4);
   return (
-  <div className="space-y-8">
-    <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-      <div>
+  <div className="min-w-0 space-y-8">
+    <div className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
+      <div className="min-w-0">
         <p className="font-mono text-[11px] uppercase tracking-[.18em] text-muted-foreground mb-3">
           {new Date().toLocaleDateString("es-ES", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
         </p>
         <h1 className="text-3xl sm:text-[34px] font-semibold tracking-[-.04em]">{getGreeting()}, {userName}</h1>
         <p className="mt-1.5 text-muted-foreground">Esto es lo que requiere tu atención.</p>
       </div>
-      <Button variant="outline" className="w-fit">
+      <Button variant="outline" className="w-full sm:w-fit">
         <RefreshCw className="h-4 w-4" />Actualizar
       </Button>
     </div>
@@ -90,6 +119,7 @@ export default async function DashboardPage() {
             </CardContent>
           </Card>
         ))}
+        {attention.length === 0 ? <Card className="sm:col-span-2 xl:col-span-4"><EmptyState compact title="Todo está al día" description="No hay casos que requieran una decisión humana en este momento." /></Card> : null}
       </div>
     </section>
 
@@ -103,25 +133,25 @@ export default async function DashboardPage() {
           <Sparkles className="h-4 w-4 text-muted-foreground" />
         </CardHeader>
 
-        <CardContent className="grid grid-cols-2 sm:grid-cols-4 gap-0 divide-x">
-          <div className="px-4 first:pl-0">
-            <Inbox className="h-4 w-4 text-muted-foreground mb-3" />
-            <p className="text-2xl font-semibold tracking-tight">128</p>
+        <CardContent className="grid grid-cols-2 gap-y-5 sm:grid-cols-4 sm:gap-y-0">
+          <div className="min-w-0 border-b border-r pb-4 pr-4 sm:border-b-0 sm:pb-0">
+            <Inbox className="mb-3 h-4 w-4 text-muted-foreground" />
+            <p className="text-2xl font-semibold tracking-tight tabular-nums">{summary.emailsProcessed.toLocaleString("es-ES")}</p>
             <p className="text-xs text-muted-foreground mt-1">Correos procesados</p>
           </div>
-          <div className="px-4">
-            <FileCheck2 className="h-4 w-4 text-muted-foreground mb-3" />
-            <p className="text-2xl font-semibold tracking-tight">24</p>
+          <div className="min-w-0 border-b pb-4 pl-4 sm:border-b-0 sm:border-r sm:pb-0">
+            <FileCheck2 className="mb-3 h-4 w-4 text-muted-foreground" />
+            <p className="text-2xl font-semibold tracking-tight tabular-nums">{summary.activeCases.toLocaleString("es-ES")}</p>
             <p className="text-xs text-muted-foreground mt-1">Casos activos</p>
           </div>
-          <div className="px-4">
-            <OctagonAlert className="h-4 w-4 text-warning mb-3" />
-            <p className="text-2xl font-semibold tracking-tight">3</p>
+          <div className="min-w-0 border-r pr-4 sm:px-4">
+            <OctagonAlert className="mb-3 h-4 w-4 text-warning" />
+            <p className="text-2xl font-semibold tracking-tight tabular-nums">{summary.pendingApprovals.toLocaleString("es-ES")}</p>
             <p className="text-xs text-muted-foreground mt-1">Aprobaciones</p>
           </div>
-          <div className="px-4">
-            <Clock3 className="h-4 w-4 text-muted-foreground mb-3" />
-            <p className="text-2xl font-semibold tracking-tight">7</p>
+          <div className="min-w-0 pl-4">
+            <Clock3 className="mb-3 h-4 w-4 text-muted-foreground" />
+            <p className="text-2xl font-semibold tracking-tight tabular-nums">{summary.openFollowUps.toLocaleString("es-ES")}</p>
             <p className="text-xs text-muted-foreground mt-1">Seguimientos</p>
           </div>
         </CardContent>
@@ -149,7 +179,7 @@ export default async function DashboardPage() {
                 />
                 <div className="min-w-0">
                   <p className="text-xs font-medium">{title}</p>
-                  <p className="text-[11px] text-muted-foreground mt-0.5 truncate">{detail}</p>
+                  <p className="text-[11px] text-muted-foreground mt-0.5 break-words">{detail}</p>
                 </div>
               </div>
             ))}
@@ -162,7 +192,7 @@ export default async function DashboardPage() {
       <CardHeader className="flex-row items-center justify-between pb-4">
         <div>
           <CardTitle className="text-[13px] uppercase tracking-wide">Estado de automatizaciones</CardTitle>
-          <p className="text-xs text-muted-foreground mt-1">12 workflows conectados a tu operación.</p>
+          <p className="text-xs text-muted-foreground mt-1">{workflowSummaries.length} workflows configurados en tu operación.</p>
         </div>
         <Link href="/automations" className="text-xs text-muted-foreground hover:text-foreground flex gap-1 items-center">
           Ver automatizaciones <ChevronRight className="h-3.5 w-3.5" />
@@ -170,20 +200,15 @@ export default async function DashboardPage() {
       </CardHeader>
       <CardContent>
         <div className="grid gap-x-8 gap-y-1 sm:grid-cols-2 lg:grid-cols-3">
-          {workflows.map(([code, name, status]) => (
-            <div key={code} className="flex items-center gap-3 py-2.5 border-b last:border-0">
-              <span className="font-mono text-[10px] text-muted-foreground w-8">{code}</span>
+          {workflowSummaries.map((workflow) => (
+            <div key={workflow.id} className="flex items-center gap-3 py-2.5 border-b last:border-0">
+              <span className="font-mono text-[10px] text-muted-foreground w-8">{workflow.code}</span>
               <Workflow className="h-3.5 w-3.5 text-muted-foreground" />
-              <span className="text-xs font-medium flex-1 truncate">{name}</span>
-              {status === "failed" ? (
-                <Badge variant="danger">Requiere atención</Badge>
-              ) : (
-                <span className="flex items-center gap-1.5 text-[11px] text-success">
-                  <span className="h-1.5 w-1.5 rounded-full bg-success" />Operativo
-                </span>
-              )}
+              <span className="text-xs font-medium flex-1 truncate">{workflow.name}</span>
+              <Badge variant={workflow.is_active ? "success" : "secondary"}>{workflow.is_active ? "Activo" : "Pausado"}</Badge>
             </div>
           ))}
+          {workflowSummaries.length === 0 ? <EmptyState compact title="Sin automatizaciones" description="No hay workflows configurados para esta organización." /> : null}
         </div>
       </CardContent>
     </Card>

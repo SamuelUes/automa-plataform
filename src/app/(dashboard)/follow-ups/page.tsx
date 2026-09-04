@@ -6,19 +6,30 @@ import { createClient } from "@/lib/supabase/client";
 import { createAction, getOperationError } from "@/lib/actions";
 import { FollowUpForm, type FollowUpFormValues } from "@/components/dashboard/follow-up-form";
 import { OperationDialog, OperationDialogContent, OperationDialogDescription, OperationDialogHeader, OperationDialogTitle } from "@/components/dashboard/operation-dialog";
-import { demoFollowUps, type FollowUp } from "@/lib/phase5-demo-data";
+import { type FollowUp } from "@/lib/phase5-demo-data";
 import { formatDateTime } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { EmptyState, ErrorState, LoadingState } from "@/components/ui/states";
 import { CalendarClock, Check, Clock3, MoreHorizontal, Play, Plus } from "lucide-react";
 
 const statusLabel = { overdue: "Vencido", today: "Hoy", upcoming: "Próximo", completed: "Completado" };
+function getFollowUpStatus(status: string, scheduledFor: string): FollowUp["status"] {
+  if (status === "completed") return "completed";
+  const scheduled = new Date(scheduledFor);
+  const now = new Date();
+  if (scheduled.getTime() < now.getTime()) return "overdue";
+  if (scheduled.toDateString() === now.toDateString()) return "today";
+  return "upcoming";
+}
 export default function FollowUpsPage() {
-  const [followUps, setFollowUps] = useState<FollowUp[]>(demoFollowUps);
+  const [followUps, setFollowUps] = useState<FollowUp[]>([]);
   const [filter, setFilter] = useState("all");
   const [processing, setProcessing] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   async function createFollowUp(values: FollowUpFormValues) {
     setProcessing("new");
     try { await createAction("schedule_follow_up", { 
@@ -33,20 +44,25 @@ export default function FollowUpsPage() {
   }
   useEffect(() => { 
     (async () => { 
-      const { data } = await (createClient() as any).from("follow_ups").select("id,case_id,scheduled_for,reason,status,created_at").order("scheduled_for"); 
-      if (data?.length) setFollowUps(data.map((item: any) => (
-        { 
-          ...item, 
-          caseId: item.case_id, 
-          caseNumber: 0, 
-          title: "Seguimiento de caso", 
-          company: "Cliente", 
-          reason: item.reason || "Seguimiento pendiente", 
-          scheduledFor: item.scheduled_for, 
-          owner: "Responsable", 
-          status: item.status === "completed" ? "completed" : "upcoming" 
-        }
-      ))); 
+      const { data, error } = await (createClient() as any).from("follow_ups").select("id,case_id,scheduled_for,reason,status,created_at,cases(case_number,title,contacts(company),users(full_name))").order("scheduled_for");
+      setLoading(false);
+      setLoadError(Boolean(error));
+      setFollowUps(data?.map((item: any) => {
+        const relatedCase = Array.isArray(item.cases) ? item.cases[0] : item.cases;
+        const contact = Array.isArray(relatedCase?.contacts) ? relatedCase.contacts[0] : relatedCase?.contacts;
+        const owner = Array.isArray(relatedCase?.users) ? relatedCase.users[0] : relatedCase?.users;
+        return {
+          ...item,
+          caseId: item.case_id,
+          caseNumber: relatedCase?.case_number || 0,
+          title: relatedCase?.title || "Seguimiento de caso",
+          company: contact?.company || "Cliente sin empresa",
+          reason: item.reason || "Seguimiento pendiente",
+          scheduledFor: item.scheduled_for,
+          owner: owner?.full_name || "Sin responsable",
+          status: getFollowUpStatus(item.status, item.scheduled_for),
+        };
+      }) ?? []);
     })(); 
   }, []);
   const visible = useMemo(() => followUps.filter((item) => filter === "all" || item.status === filter), [followUps, filter]);
@@ -61,9 +77,13 @@ export default function FollowUpsPage() {
   return (
   <div className="space-y-7">
     <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-      <div><p className="font-mono text-[11px] uppercase tracking-[.18em] text-muted-foreground mb-3">Operations / Cadence</p>
-       <h1 className="text-3xl font-semibold tracking-[-.04em]">Seguimientos</h1>
-        <p className="text-muted-foreground mt-1.5">No dejes que una promesa importante se pierda en el tiempo.</p></div><Button onClick={() => setDialogOpen(true)}><Plus />Nuevo seguimiento</Button>
+      <div>
+        <p className="font-mono text-[11px] uppercase tracking-[.18em] text-muted-foreground mb-3">Operations / Cadence</p>
+        <h1 className="text-3xl font-semibold tracking-[-.04em]">Seguimientos</h1>
+        <p className="text-muted-foreground mt-1.5">No dejes que una promesa importante se pierda en el tiempo.</p>
+      </div>
+      <Button onClick={() => setDialogOpen(true)}><Plus />Nuevo seguimiento</Button>
+      
        <OperationDialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <OperationDialogContent>
           <OperationDialogHeader>
@@ -84,8 +104,15 @@ export default function FollowUpsPage() {
          <span className="font-mono text-[10px] ml-1"> {key === "all" ? followUps.length : followUps.filter((item) => item.status === key).length}</span>
           </Button>)}
        </div>
-       
-       <div className="space-y-3">
+       {loading ? 
+       <Card>
+         <LoadingState compact label="Cargando seguimientos..." />
+       </Card> : null}
+       {loadError ? 
+       <Card>
+         <ErrorState compact message="No pudimos cargar los seguimientos." />
+       </Card> : null}
+       <div className={loading || loadError ? "hidden" : "space-y-3"}>
         {visible.map((item) => 
         <Card key={item.id} className={item.status === "overdue" ? "border-destructive/30" : ""}>
           <CardContent className="p-5">
@@ -129,6 +156,12 @@ export default function FollowUpsPage() {
               </div>
             </div>
           </CardContent>
-        </Card>)}</div>{visible.length === 0 && <div className="py-16 text-center text-sm text-muted-foreground">No hay seguimientos en esta vista.</div>}</div>
+        </Card>)}
+        </div>
+        {!loading && !loadError && visible.length === 0 ? 
+        <Card>
+          <EmptyState compact title="Sin seguimientos" description="No hay seguimientos en esta vista." />
+        </Card> : null}
+      </div>
   );
 }

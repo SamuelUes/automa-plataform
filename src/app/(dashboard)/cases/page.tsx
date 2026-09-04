@@ -12,18 +12,25 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
+import { ErrorState, LoadingState } from "@/components/ui/states";
 import { CaseStatusBadge, PriorityBadge, statusLabels, priorityLabels } from "@/components/cases/status-badge";
 import { ArrowUpRight, LayoutGrid, List, Plus, Search, SlidersHorizontal } from "lucide-react";
 
 const kanbanColumns = ["new", "evaluating", "waiting_approval", "in_progress", "delegated", "waiting_customer", "follow_up", "resolved"] as const;
+type CaseRow = DemoCase & {
+  contacts?: { name: string | null; company: string | null } | Array<{ name: string | null; company: string | null }> | null;
+  departments?: { name: string | null } | Array<{ name: string | null }> | null;
+};
+const demoMode = process.env.NEXT_PUBLIC_DEMO_MODE === "true";
 
 export default function CasesPage() {
-  const [cases, setCases] = useState<DemoCase[]>(demoCases);
+  const [cases, setCases] = useState<DemoCase[]>(demoMode ? demoCases : []);
   const [view, setView] = useState<"table" | "kanban">("table");
   const [search, setSearch] = useState("");
   const [priority, setPriority] = useState("all");
   const [status, setStatus] = useState("all");
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [caseDialogOpen, setCaseDialogOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [moreFiltersOpen, setMoreFiltersOpen] = useState(false);
@@ -32,8 +39,13 @@ export default function CasesPage() {
   
   useEffect(() => { 
     (async () => { 
-      const { data } = await createClient().from("cases").select("id,case_number,title,description,status,priority,updated_at,created_at,requires_approval,requires_human").order("updated_at", { ascending: false }).limit(100); 
-      if (data?.length) setCases(data.map((c) => Object.assign({}, c, { client: "Cliente", company: "—", department: "—", assignee: "—" })) as DemoCase[]); 
+      const { data, error } = await createClient().from("cases").select("id,case_number,title,description,status,priority,updated_at,created_at,requires_approval,requires_human,contacts(name,company),departments(name)").order("updated_at", { ascending: false }).limit(100);
+      setLoadError(Boolean(error));
+      if (data) setCases((data as unknown as CaseRow[]).map((item) => {
+        const contact = Array.isArray(item.contacts) ? item.contacts[0] : item.contacts;
+        const department = Array.isArray(item.departments) ? item.departments[0] : item.departments;
+        return Object.assign({}, item, { client: contact?.name || "Sin contacto", company: contact?.company || "Sin empresa", department: department?.name || "Sin departamento", assignee: "Sin asignar" });
+      }) as unknown as DemoCase[]);
       setLoading(false); 
     })(); 
   }, []);
@@ -92,7 +104,7 @@ export default function CasesPage() {
         <h1 className="text-3xl font-semibold tracking-[-.04em]">Casos</h1>
         <p className="text-muted-foreground mt-1.5">Gestiona solicitudes, reclamos y asuntos que requieren seguimiento.</p>
       </div>
-      <Button onClick={() => setCaseDialogOpen(true)}><Plus />Nuevo caso</Button>
+      <Button onClick={() => setCaseDialogOpen(true)} className="w-full sm:w-fit"><Plus />Nuevo caso</Button>
     </div>
     <OperationDialog open={caseDialogOpen} onOpenChange={setCaseDialogOpen}>
       <OperationDialogContent>
@@ -104,8 +116,8 @@ export default function CasesPage() {
       </OperationDialogContent>
     </OperationDialog>
 
-    <div className="flex flex-col xl:flex-row gap-3 justify-between">
-      <div className="flex flex-1 flex-wrap gap-2">
+    <div className="flex min-w-0 flex-col gap-3 justify-between xl:flex-row">
+      <div className="flex min-w-0 flex-1 flex-wrap gap-2">
         <div className="relative w-full sm:w-70">
           <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
           <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar por título o cliente..." className="pl-9" />
@@ -136,9 +148,9 @@ export default function CasesPage() {
         </select>
         <Button variant="ghost" size="sm" onClick={() => { setRequiresApproval("all"); setRequiresHuman("all"); }}>Limpiar</Button>
       </div>}
-      <div className="flex items-center gap-1 border rounded-md p-1 w-fit">
-        <Button size="sm" variant={view === "table" ? "secondary" : "ghost"} onClick={() => setView("table")}><List />Tabla</Button>
-        <Button size="sm" variant={view === "kanban" ? "secondary" : "ghost"} onClick={() => setView("kanban")}><LayoutGrid />Kanban</Button>
+      <div className="flex w-full items-center gap-1 rounded-md border p-1 sm:w-fit">
+        <Button className="flex-1 sm:flex-none" size="sm" variant={view === "table" ? "secondary" : "ghost"} onClick={() => setView("table")}><List />Tabla</Button>
+        <Button className="flex-1 sm:flex-none" size="sm" variant={view === "kanban" ? "secondary" : "ghost"} onClick={() => setView("kanban")}><LayoutGrid />Kanban</Button>
       </div>
     </div>
 
@@ -149,8 +161,28 @@ export default function CasesPage() {
       </span>
     </div>
 
+    {loading ? <Card><LoadingState compact label="Cargando casos..." /></Card> : null}
+    {loadError ? <Card><ErrorState compact message="No pudimos cargar los casos." /></Card> : null}
+    <div className={loading || loadError ? "hidden" : "block"}>
     {view === "table" ? <Card className="overflow-hidden">
-      <div className="overflow-x-auto">
+      <div className="md:hidden">
+        {filtered.map((item) => <Link key={item.id} href={`/cases/${item.id}`} className="block border-b p-4 last:border-b-0">
+          <div className="flex items-start justify-between gap-3">
+            <PriorityBadge priority={item.priority} />
+            <CaseStatusBadge status={item.status} />
+          </div>
+          <p className="mt-3 text-sm font-medium leading-snug">{item.title}</p>
+          <p className="mt-1 font-mono text-[11px] text-muted-foreground">#{item.case_number}</p>
+          <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+            <span>{item.client}</span>
+            <span>{item.company}</span>
+            <span>{item.assignee}</span>
+            <span>{formatRelativeTime(item.updated_at)}</span>
+          </div>
+        </Link>)}
+        {filtered.length === 0 && <div className="px-4 py-12 text-center text-sm text-muted-foreground">No encontramos casos con esos filtros.</div>}
+      </div>
+      <div className="hidden overflow-x-auto md:block">
         <table className="w-full text-sm">
           <thead className="bg-muted/35 border-b">
             <tr className="text-left text-[11px] text-muted-foreground uppercase tracking-wide">
@@ -186,7 +218,8 @@ export default function CasesPage() {
 
       {filtered.length === 0 && <div className="py-16 text-center text-sm text-muted-foreground">No encontramos casos con esos filtros.</div>}
      
-     </Card> : <div className="grid gap-4 lg:grid-cols-4 xl:grid-cols-8 overflow-x-auto pb-4">
+     </Card> : <div className="w-full min-w-0 overflow-x-auto pb-4">
+      <div className="grid min-w-max gap-4 lg:min-w-0 lg:grid-cols-4 xl:grid-cols-8">
       {kanbanColumns.map((column) => <div key={column} className="min-w-55">
         <div className="flex items-center justify-between mb-3 px-1">
           <div className="flex items-center gap-2">
@@ -209,7 +242,9 @@ export default function CasesPage() {
           </Link>)}
         </div>
       </div>)}
+      </div>
     </div>}
+    </div>
   </div>
   );
 }

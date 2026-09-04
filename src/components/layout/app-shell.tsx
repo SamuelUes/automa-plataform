@@ -124,10 +124,12 @@ export function AppShell({
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
+  const pathname = usePathname();
+  const currentSection = pathname.split("/")[1] || "inicio";
   const { theme, setTheme } = useTheme();
   useEffect(() => setMounted(true), []);
   return (
-  <div className="min-h-screen flex bg-background">
+  <div className="min-h-screen flex min-w-0 bg-background">
     <div className="relative">
       <Sidebar
         collapsed={collapsed}
@@ -137,43 +139,43 @@ export function AppShell({
     </div>
 
       <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
-        <SheetTrigger asChild>
-          <Button variant="ghost" size="icon" className="fixed left-4 top-4 z-30 lg:hidden" aria-label="Abrir menú"><Menu /></Button>
-        </SheetTrigger>
-        <SheetContent side="left" className="w-65 p-3 bg-sidebar">
+        <div className="flex min-w-0 flex-1 flex-col">
+          <header className="sticky top-0 z-20 flex min-h-16 items-center gap-2 border-b bg-background/90 px-3 backdrop-blur sm:gap-3 sm:px-7">
+            <SheetTrigger asChild>
+              <Button variant="ghost" size="icon" className="shrink-0 lg:hidden" aria-label="Abrir menú"><Menu /></Button>
+            </SheetTrigger>
+            <div className="min-w-0 flex-1 sm:flex-none">
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <span className="truncate font-medium text-foreground">Command Center</span>
+                <ChevronRight className="hidden h-3 w-3 shrink-0 sm:block" />
+                <span className="hidden capitalize sm:block">{currentSection}</span>
+              </div>
+            </div>
+            <div className="ml-auto flex shrink-0 items-center gap-0.5 sm:gap-1.5">
+              <GlobalSearch />
+              <Button variant="ghost" size="icon" aria-label="Ayuda">
+                <CircleHelp />
+              </Button>
+              <NotificationBell />
+              <Button variant="ghost" size="icon" aria-label="Cambiar tema" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
+                {mounted ? (theme === "dark" ? <Sun /> : <Moon />) : <Sun className="opacity-0" />}
+              </Button>
+              <div className="hidden h-7 w-px bg-border sm:ml-1 sm:block" />
+              <Avatar className="h-8 w-8 sm:hidden">
+                <AvatarFallback className="bg-[#d7e7e2] text-[#28584e] text-xs">{getInitials(currentUser.fullName)}</AvatarFallback>
+              </Avatar>
+            </div>
+          </header>
+
+          <main className="min-w-0 flex-1 overflow-auto">
+            <div className="mx-auto max-w-360 px-3 py-5 sm:px-7 sm:py-7 lg:px-10">{children}</div>
+          </main>
+        </div>
+        <SheetContent side="left" className="w-[min(17rem,calc(100vw-1rem))] bg-sidebar p-3">
           <SheetTitle className="sr-only">Navegación principal</SheetTitle>
           <NavContent collapsed={false} onNavigate={() => setMobileOpen(false)} />
         </SheetContent>
       </Sheet>
-      
-      <div className="flex-1 min-w-0 flex flex-col">
-        <header className="h-16 border-b flex items-center gap-3 px-4 sm:px-7 bg-background/90 backdrop-blur sticky top-0 z-20">
-          <div className="hidden sm:flex items-center gap-2 text-xs text-muted-foreground">
-            <span className="text-foreground font-medium">Command Center</span>
-            <ChevronRight className="h-3 w-3" />
-            <span className="capitalize">{usePathname().split("/")[1] || "inicio"}</span>
-          </div>
-          <div className="sm:hidden flex-1 text-sm font-semibold">Command Center</div>
-          <div className="ml-auto flex items-center gap-1.5">
-            <GlobalSearch />
-            <Button variant="ghost" size="icon" aria-label="Ayuda">
-              <CircleHelp />
-            </Button>
-            <NotificationBell />
-            <Button variant="ghost" size="icon" aria-label="Cambiar tema" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
-              {mounted ? (theme === "dark" ? <Sun /> : <Moon />) : <Sun className="opacity-0" />}
-            </Button>
-            <div className="hidden sm:block ml-1 h-7 w-px bg-border" />
-            <Avatar className="h-8 w-8 sm:hidden">
-              <AvatarFallback className="bg-[#d7e7e2] text-[#28584e] text-xs">{getInitials(currentUser.fullName)}</AvatarFallback>
-            </Avatar>
-          </div>
-        </header>
-        
-        <main className="flex-1 overflow-auto">
-          <div className="max-w-360 mx-auto px-4 py-7 sm:px-7 lg:px-10">{children}</div>
-        </main>
-      </div>
     </div>
   );
 }
