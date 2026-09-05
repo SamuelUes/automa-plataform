@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
 import { createAction, getOperationError } from "@/lib/actions";
+import { ActionCenter } from "@/components/dashboard/action-center";
 import { DelegationForm, type DelegationFormValues } from "@/components/dashboard/delegation-form";
 import { OperationDialog, OperationDialogContent, OperationDialogDescription, OperationDialogHeader, OperationDialogTitle } from "@/components/dashboard/operation-dialog";
 import { type Delegation } from "@/lib/phase5-demo-data";
@@ -12,10 +14,12 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { EmptyState, ErrorState, LoadingState } from "@/components/ui/states";
-import { BriefcaseBusiness, Check, MoreHorizontal, Plus } from "lucide-react";
+import { BriefcaseBusiness, Check, MoreHorizontal, Plus, UserRound } from "lucide-react";
 
 export default function DelegationsPage() {
+  const router = useRouter();
   const [delegations, setDelegations] = useState<Delegation[]>([]);
+  const [actionItem, setActionItem] = useState<Delegation | null>(null);
   const [processing, setProcessing] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
@@ -59,11 +63,32 @@ export default function DelegationsPage() {
       } else { 
         await createAction("delegate_case", { case_id: item.caseId || undefined, input_data: { delegation_id: item.id, status: "completed" } }); 
         setDelegations((current) => current.map((entry) => entry.id === item.id ? { ...entry, status: "completed" } : entry)); 
-        toast.success("Delegación completada."); 
-      } 
+        toast.success("Delegación completada.");
+      }
+      setActionItem(null);
     } catch (error) { toast.error(getOperationError(error)); } finally { setProcessing(null); } }
   
   return ( 
+  <>
+  <ActionCenter
+    open={Boolean(actionItem)}
+    onOpenChange={(open) => { if (!open) setActionItem(null); }}
+    title="Opciones de la delegación"
+    description={actionItem ? `${actionItem.title}. Elige una acción.` : "Elige una acción."}
+    actions={actionItem ? [
+      { id: "complete", label: "Completar delegación", description: "Confirma que la responsabilidad ya fue atendida.",
+        workflow: "PE04",
+        icon: <Check className="h-4 w-4" />,
+        onSelect: () => void complete(actionItem) },
+      { id: "case", label: "Abrir caso", description: "Consulta el contexto completo del asunto delegado.",
+        icon: <BriefcaseBusiness className="h-4 w-4" />,
+        onSelect: () => { router.push(`/cases/${actionItem.caseId}`); setActionItem(null); } },
+      { id: "reassign", label: "Preparar reasignación", description: "Abre el formulario para transferir la responsabilidad.",
+        workflow: "PE04",
+        icon: <UserRound className="h-4 w-4" />,
+        onSelect: () => { setActionItem(null); setDialogOpen(true); } },
+    ] : []}
+  />
   <div className="space-y-7">
     <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
       <div><p className="font-mono text-[11px] uppercase tracking-[.18em] text-muted-foreground mb-3">Operations / Ownership</p>
@@ -147,8 +172,7 @@ export default function DelegationsPage() {
                                   {processing === item.id ? "Guardando..." : "Completar"}
                                 </Button>
                               )}
-                              <button aria-label="Más opciones" 
-                                onClick={() => toast.info("No hay acciones adicionales disponibles para esta delegación.")}>
+                              <button aria-label="Más opciones" onClick={() => setActionItem(item)}>
                                 <MoreHorizontal className="h-4 w-4 text-muted-foreground" />
                               </button>
                             </div>
@@ -173,5 +197,6 @@ export default function DelegationsPage() {
                   ))}
                 </div>
               </div>
+  </>
             );
 }

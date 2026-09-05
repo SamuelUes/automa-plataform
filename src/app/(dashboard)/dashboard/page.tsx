@@ -1,13 +1,13 @@
 import Link from "next/link";
-import { ArrowUpRight, ChevronRight, Clock3, FileCheck2, Inbox, MoreHorizontal, OctagonAlert, RefreshCw, Sparkles, Workflow } from "lucide-react";
+import { ArrowUpRight, ChevronRight, Clock3, FileCheck2, Inbox, MoreHorizontal, OctagonAlert, Sparkles, Workflow } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import { type DemoCase } from "@/lib/demo-data";
 import { formatRelativeTime, getGreeting } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { PriorityBadge, CaseStatusBadge } from "@/components/cases/status-badge";
 import { EmptyState } from "@/components/ui/states";
+import { RefreshDashboardButton } from "@/components/dashboard/refresh-dashboard-button";
 
 async function getCurrentUserName() {
   const supabase = await createClient();
@@ -78,9 +78,7 @@ export default async function DashboardPage() {
         <h1 className="text-3xl sm:text-[34px] font-semibold tracking-[-.04em]">{getGreeting()}, {userName}</h1>
         <p className="mt-1.5 text-muted-foreground">Esto es lo que requiere tu atención.</p>
       </div>
-      <Button variant="outline" className="w-full sm:w-fit">
-        <RefreshCw className="h-4 w-4" />Actualizar
-      </Button>
+      <RefreshDashboardButton />
     </div>
 
     <section>

@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { EmptyState, ErrorState, LoadingState } from "@/components/ui/states";
+import { OperationDialog, OperationDialogContent, OperationDialogDescription, OperationDialogHeader, OperationDialogTitle } from "@/components/dashboard/operation-dialog";
 import { ArrowUpRight, Check, CheckCircle2, FileCheck2, Mail, MoreHorizontal, Pencil, ShieldAlert, Sparkles, X } from "lucide-react";
 
 type Approval = { id: string; caseId: string; caseNumber: number; title: string; company: string; requestedAt: string; draft: string; reason: string; priority: "urgent" | "high"; status: "pending" | "approved" | "rejected" };
@@ -20,6 +21,8 @@ export default function ApprovalsPage() {
   const [feedback, setFeedback] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
+  const [rejecting, setRejecting] = useState<Approval | null>(null);
+  const [rejectComment, setRejectComment] = useState("");
   useEffect(() => { void (async () => {
     const { data, error } = await (createClient() as any).from("approvals").select("id,case_id,status,requested_at,decision,comment,cases(case_number,title,priority,contacts(company))").eq("status", "pending").order("requested_at", { ascending: true });
     setLoading(false);
@@ -45,11 +48,15 @@ export default function ApprovalsPage() {
   })(); }, []);
 
   const selected = approvals.find((approval) => approval.id === selectedId) || approvals[0];
-  async function decide(approval: Approval, decision: "approve_email" | "reject_approval") {
+  async function decide(approval: Approval, decision: "approve_email" | "reject_approval", comment?: string) {
     setProcessing(approval.id); 
     setFeedback(null); 
     try { 
-      await createAction(decision, { case_id: approval.caseId.startsWith("demo-") ? undefined : approval.caseId, approval_id: approval.id, input_data: { decision } }); 
+      await createAction(decision, {
+        case_id: approval.caseId.startsWith("demo-") ? undefined : approval.caseId,
+        approval_id: approval.id,
+        input_data: { decision, ...(comment ? { comment } : {}) }
+      });
       setApprovals((current) => current.map((item) => item.id === approval.id ? { ...item, status: decision === "approve_email" ? "approved" : "rejected" } : item)); 
       setFeedback(decision === "approve_email" ? "Aprobación creada. PE03 procesará el envío." : "Aprobación rechazada. El caso permanece sin cambios."); 
     } catch { 
@@ -58,7 +65,42 @@ export default function ApprovalsPage() {
       setProcessing(null); 
     } 
   }
+
+  async function rejectApproval() {
+    if (!rejecting || !rejectComment.trim()) return;
+    await decide(rejecting, "reject_approval", rejectComment.trim());
+    setRejecting(null);
+    setRejectComment("");
+  }
+
   return (
+  <>
+  <OperationDialog open={Boolean(rejecting)} onOpenChange={(open) => { if (!open) { setRejecting(null); setRejectComment(""); } }}>
+    <OperationDialogContent>
+      <OperationDialogHeader>
+        <OperationDialogTitle>
+          Rechazar aprobación
+        </OperationDialogTitle>
+        <OperationDialogDescription>
+          Explica por qué no debe ejecutarse esta recomendación.
+        </OperationDialogDescription>
+      </OperationDialogHeader>
+
+      <label className="grid gap-1.5 text-sm">
+        Motivo del rechazo
+        <textarea value={rejectComment} onChange={(event) => setRejectComment(event.target.value)} autoFocus rows={4} className="rounded-md border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring" placeholder="Describe el ajuste o la razón de rechazo..." />
+      </label>
+      <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+        <Button type="button" variant="outline" onClick={() => setRejecting(null)}>
+          Cancelar
+        </Button>
+        <Button type="button" variant="destructive" disabled={!rejectComment.trim() || processing === rejecting?.id} onClick={() => void rejectApproval()}>
+          {processing === rejecting?.id ? "Guardando..." : "Confirmar rechazo"}
+        </Button>
+      </div>
+    </OperationDialogContent>
+  </OperationDialog>
+
   <div className="space-y-7">
     <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
       <div>
@@ -158,5 +200,6 @@ export default function ApprovalsPage() {
                   }
                 </div>
               </div>
+  </>
   );
 }

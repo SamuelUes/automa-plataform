@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { demoEmails, type DemoEmail } from "@/lib/email-demo-data";
@@ -16,17 +17,20 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { EmptyState } from "@/components/ui/states";
 import { PriorityBadge } from "@/components/cases/status-badge";
-import { Archive, ArrowUpRight, ChevronLeft, FileCheck2, Inbox, Mail, MoreHorizontal, Paperclip, Reply, Search, SlidersHorizontal, Star } from "lucide-react";
+import { ActionCenter } from "@/components/dashboard/action-center";
+import { Archive, ArrowUpRight, BriefcaseBusiness, ChevronLeft, FileCheck2, Inbox, Mail, MoreHorizontal, Paperclip, Reply, Search, SlidersHorizontal, Star } from "lucide-react";
 
 const demoMode = process.env.NEXT_PUBLIC_DEMO_MODE === "true";
 
 export default function EmailsPage() {
+  const router = useRouter();
   const [emails, setEmails] = useState<DemoEmail[]>(demoMode ? demoEmails : []);
   const [selectedId, setSelectedId] = useState(demoMode ? demoEmails[0].id : "");
   const [mobilePanel, setMobilePanel] = useState<"inbox" | "detail">("inbox");
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [composeOpen, setComposeOpen] = useState(false);
+  const [actionCenterOpen, setActionCenterOpen] = useState(false);
   const [composeMode, setComposeMode] = useState<"new" | "reply" | "forward">("new");
   const [sending, setSending] = useState(false);
   async function sendEmail(values: EmailComposeValues) {
@@ -89,6 +93,18 @@ export default function EmailsPage() {
   const selected = visible.find((email) => email.id === selectedId) || visible[0] || emails[0];
   return (
   <>
+  <ActionCenter
+    open={actionCenterOpen}
+    onOpenChange={setActionCenterOpen}
+    title="Acciones del correo"
+    description={selected ? `${selected.subject || "Sin asunto"}. Elige una acción.` : "Selecciona un correo para continuar."}
+    actions={selected ? [
+      { id: "reply", label: "Responder", description: "Prepara una respuesta dirigida al remitente.", workflow: "PE07", icon: <Reply className="h-4 w-4" />, onSelect: () => { setActionCenterOpen(false); setComposeMode("reply"); setComposeOpen(true); } },
+      { id: "forward", label: "Reenviar", description: "Prepara una copia del mensaje para otro destinatario.", workflow: "PE07", icon: <ArrowUpRight className="h-4 w-4" />, onSelect: () => { setActionCenterOpen(false); setComposeMode("forward"); setComposeOpen(true); } },
+      { id: "case", label: "Abrir caso relacionado", description: "Navega al caso asociado al correo.", icon: <BriefcaseBusiness className="h-4 w-4" />, disabled: !selected.caseId, onSelect: () => { if (selected.caseId) router.push(`/cases/${selected.caseId}`); setActionCenterOpen(false); } },
+      { id: "copy-subject", label: "Copiar asunto", description: "Copia el asunto para usarlo en otra acción.", icon: <FileCheck2 className="h-4 w-4" />, onSelect: () => { void navigator.clipboard?.writeText(selected.subject || "Sin asunto"); setActionCenterOpen(false); toast.success("Asunto copiado."); } },
+    ] : []}
+  />
   <OperationDialog open={composeOpen} onOpenChange={setComposeOpen}>
     <OperationDialogContent>
       <OperationDialogHeader>
@@ -166,12 +182,10 @@ export default function EmailsPage() {
                           </Link>
                           </div>
                           <div className="flex gap-1">
-                            <Button variant="ghost" size="icon" aria-label="Archivar" 
-                              onClick={() => toast.info("Archivar estará disponible cuando exista soporte persistente en el esquema.")}>
+                            <Button variant="ghost" size="icon" aria-label="Archivar" disabled title="Archivar requiere un campo de estado persistente en el backend.">
                               <Archive />
                             </Button>
-                            <Button variant="ghost" size="icon" aria-label="Más opciones" 
-                              onClick={() => toast.info("No hay acciones adicionales disponibles para este correo.")}>
+                            <Button variant="ghost" size="icon" aria-label="Más opciones" onClick={() => setActionCenterOpen(true)}>
                               <MoreHorizontal />
                             </Button>
                           </div>

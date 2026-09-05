@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
 import { createAction, getOperationError } from "@/lib/actions";
+import { ActionCenter } from "@/components/dashboard/action-center";
 import { FollowUpForm, type FollowUpFormValues } from "@/components/dashboard/follow-up-form";
 import { OperationDialog, OperationDialogContent, OperationDialogDescription, OperationDialogHeader, OperationDialogTitle } from "@/components/dashboard/operation-dialog";
 import { type FollowUp } from "@/lib/phase5-demo-data";
@@ -28,6 +29,7 @@ export default function FollowUpsPage() {
   const [filter, setFilter] = useState("all");
   const [processing, setProcessing] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [actionItem, setActionItem] = useState<FollowUp | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
   async function createFollowUp(values: FollowUpFormValues) {
@@ -66,15 +68,43 @@ export default function FollowUpsPage() {
     })(); 
   }, []);
   const visible = useMemo(() => followUps.filter((item) => filter === "all" || item.status === filter), [followUps, filter]);
+  async function reschedule(item: FollowUp, amount: number, unit: "hours" | "days") {
+    setProcessing(item.id);
+    const scheduledFor = new Date(item.scheduledFor);
+    scheduledFor.setTime(scheduledFor.getTime() + amount * (unit === "hours" ? 60 * 60 * 1000 : 24 * 60 * 60 * 1000));
+    try {
+      await createAction("schedule_follow_up", { case_id: item.caseId || undefined, input_data: { follow_up_id: item.id, scheduled_for: scheduledFor.toISOString(), reason: item.reason } });
+      setFollowUps((current) => current.map((entry) => entry.id === item.id ? { ...entry, scheduledFor: scheduledFor.toISOString(), status: "upcoming" } : entry));
+      toast.success("Seguimiento reprogramado.");
+      setActionItem(null);
+    } catch (error) { toast.error(getOperationError(error)); }
+    finally { setProcessing(null); }
+  }
+
   async function runAction(item: FollowUp, action: "schedule_follow_up" | "resolve_case") { setProcessing(item.id); 
     try { await createAction(action, { 
       case_id: item.caseId || undefined, 
       input_data: { follow_up_id: item.id } 
     }); 
-    if (action === "resolve_case") setFollowUps((current) => current.map((entry) => entry.id === item.id ? { ...entry, status: "completed" } : entry)); 
-    } finally { setProcessing(null); } }
+    if (action === "resolve_case") setFollowUps((current) => current.map((entry) => entry.id === item.id ? { ...entry, status: "completed" } : entry));
+    if (action === "resolve_case") { toast.success("Seguimiento completado."); setActionItem(null); }
+    } catch (error) { toast.error(getOperationError(error)); }
+    finally { setProcessing(null); } }
   
   return (
+  <>
+  <ActionCenter
+    open={Boolean(actionItem)}
+    onOpenChange={(open) => { if (!open) setActionItem(null); }}
+    title="Opciones del seguimiento"
+    description={actionItem ? `${actionItem.title}. Elige una acción operativa.` : "Elige una acción operativa."}
+    actions={actionItem ? [
+      { id: "hour", label: "Posponer una hora", description: "Mueve el seguimiento una hora hacia adelante.", workflow: "PE06", icon: <Clock3 className="h-4 w-4" />, onSelect: () => void reschedule(actionItem, 1, "hours") },
+      { id: "tomorrow", label: "Posponer mañana", description: "Mueve el seguimiento 24 horas.", workflow: "PE06", icon: <CalendarClock className="h-4 w-4" />, onSelect: () => void reschedule(actionItem, 1, "days") },
+      { id: "week", label: "Posponer una semana", description: "Mueve el seguimiento siete días.", workflow: "PE06", icon: <CalendarClock className="h-4 w-4" />, onSelect: () => void reschedule(actionItem, 7, "days") },
+      { id: "complete", label: "Completar", description: "Marca el seguimiento después de confirmar la acción.", workflow: "PE12", icon: <Check className="h-4 w-4" />, tone: "warning" as const, onSelect: () => void runAction(actionItem, "resolve_case") },
+    ] : []}
+  />
   <div className="space-y-7">
     <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
       <div>
@@ -149,8 +179,7 @@ export default function FollowUpsPage() {
                     </Button>
                   </>
                 )}
-                <Button size="icon" variant="ghost" aria-label="Más opciones" 
-                  onClick={() => toast.info("No hay acciones adicionales disponibles para este seguimiento.")}>
+                <Button size="icon" variant="ghost" aria-label="Más opciones" onClick={() => setActionItem(item)}>
                   <MoreHorizontal />
                 </Button>
               </div>
@@ -163,5 +192,6 @@ export default function FollowUpsPage() {
           <EmptyState compact title="Sin seguimientos" description="No hay seguimientos en esta vista." />
         </Card> : null}
       </div>
+  </>
   );
 }

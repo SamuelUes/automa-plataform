@@ -9,6 +9,7 @@ import { demoCases, type DemoCase } from "@/lib/demo-data";
 import { isDemoId } from "@/components/dashboard/action-feedback";
 import { DelegationForm, type DelegationFormValues } from "@/components/dashboard/delegation-form";
 import { FollowUpForm, type FollowUpFormValues } from "@/components/dashboard/follow-up-form";
+import { ActionCenter } from "@/components/dashboard/action-center";
 import { OperationDialog, OperationDialogContent, OperationDialogDescription, OperationDialogHeader, OperationDialogTitle } from "@/components/dashboard/operation-dialog";
 import { toast } from "sonner";
 import { formatDateTime, formatRelativeTime } from "@/lib/utils";
@@ -28,6 +29,7 @@ export default function CaseDetailPage() {
   const [sendingMessage, setSendingMessage] = useState(false);
   const [messageNotice, setMessageNotice] = useState<string | null>(null);
   const [dialog, setDialog] = useState<"delegation" | "follow-up" | null>(null);
+  const [actionCenterOpen, setActionCenterOpen] = useState(false);
   const [processing, setProcessing] = useState(false);
   async function resolveCase() {
     if (!id || processing) return;
@@ -47,6 +49,24 @@ export default function CaseDetailPage() {
     } catch (error) { toast.error(getOperationError(error)); }
     finally { setProcessing(false); }
   }
+  async function runCaseAction(actionType: "verify_case" | "close_case") {
+    if (!id || processing) return;
+    setProcessing(true);
+    try {
+      if (isDemoId(id)) {
+        toast.info("Esta acción requiere un caso conectado a Supabase.");
+        return;
+      }
+      await createAction(actionType, { case_id: id });
+      toast.success(actionType === "verify_case" ? "Caso enviado a verificación." : "Caso enviado a cierre.");
+      setActionCenterOpen(false);
+    } catch (error) {
+      toast.error(getOperationError(error));
+    } finally {
+      setProcessing(false);
+    }
+  }
+
   async function delegateCase(values: DelegationFormValues) {
     if (!id) return;
     setProcessing(true);
@@ -140,6 +160,23 @@ export default function CaseDetailPage() {
     </OperationDialogContent>
   </OperationDialog>
 
+  <ActionCenter
+    open={actionCenterOpen}
+    onOpenChange={setActionCenterOpen}
+    title="Acciones del caso"
+    description="Estas acciones se validan y procesan mediante el workflow correspondiente."
+    actions={[
+      { id: "verify", label: "Verificar caso", description: "Confirma que la gestión cumple las condiciones del caso.", workflow: "PE12", icon: <ShieldCheck className="h-4 w-4" />,
+        onSelect: () => void runCaseAction("verify_case") },
+      { id: "close", label: "Cerrar caso", description: "Registra el cierre definitivo después de la resolución.", workflow: "PE12", icon: <CircleCheck className="h-4 w-4" />, tone: "warning" as const,
+        onSelect: () => void runCaseAction("close_case") },
+      { id: "delegate", label: "Delegar caso", description: "Transfiere la responsabilidad a otra persona o departamento.", workflow: "PE04", icon: <UserRound className="h-4 w-4" />,
+        onSelect: () => { setActionCenterOpen(false); setDialog("delegation"); } },
+      { id: "follow-up", label: "Crear seguimiento", description: "Programa la próxima acción y evita que el caso se quede detenido.", workflow: "PE06", icon: <CalendarClock className="h-4 w-4" />,
+        onSelect: () => { setActionCenterOpen(false); setDialog("follow-up"); } },
+    ]}
+  />
+
   <div className="space-y-6">
     <Link href="/cases" className="inline-flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground">
       <ArrowLeft className="h-3.5 w-3.5" />Volver a casos
@@ -156,7 +193,7 @@ export default function CaseDetailPage() {
         <p className="text-muted-foreground mt-2 max-w-2xl">{item.description}</p>
       </div>
       <div className="flex gap-2">
-        <Button variant="outline" onClick={() => toast.info("Las acciones disponibles se mostrarán según el estado del caso.")}>
+        <Button variant="outline" onClick={() => setActionCenterOpen(true)} disabled={processing}>
           <MoreHorizontal />Más acciones
         </Button>
         <Button onClick={() => void resolveCase()} disabled={processing || item.status === "resolved"}>
