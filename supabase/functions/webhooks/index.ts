@@ -6,6 +6,15 @@ declare const Deno: {
 // @ts-expect-error Deno resolves URL imports at Edge Function runtime.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
+import {
+  createCommand,
+  createExecution,
+  WORKFLOW_RESULT_CONTRACT,
+  workflowExternalEffects,
+  workflowOutcome,
+  workflowRetry,
+} from "../_shared/integration.ts";
+import { triggerWorkflow } from "../_shared/n8n/client.ts";
 
 const terminalStatuses = ["success", "failed", "cancelled"];
 
@@ -74,6 +83,15 @@ Deno.serve(async (req: Request) => {
 
     const outputData = body.output_data && typeof body.output_data === "object" ? body.output_data : {};
     const errorData = body.error_data && typeof body.error_data === "object" ? body.error_data : {};
+    const contractResult = {
+      contract_version: WORKFLOW_RESULT_CONTRACT,
+      outcome: workflowOutcome(status, outputData),
+      retry: workflowRetry(status, outputData, errorData),
+      coverage: outputData.coverage || outputData.coverage_status || null,
+      errors: status === "failed" ? [errorData] : [],
+      external_effects: workflowExternalEffects(body.workflow_code, outputData),
+      network_access: body.workflow_code === "PE00" ? [] : ["n8n_callback"],
+    };
     const { error: updateError } = await admin
       .from("workflow_executions")
       .update({
@@ -131,17 +149,92 @@ Deno.serve(async (req: Request) => {
       if (error) throw error;
     }
 
+    let dispatched: { command_id: string; target_workflow_code: string; workflow_execution_id: string } | null = null;
+    if (status === "success" && body.workflow_code === "PE02") {
+      const decisionInfo = (outputData.decision && typeof outputData.decision === "object" ? outputData.decision : outputData) as Record<string, unknown>;
+      const decisionId = typeof decisionInfo.decision_id === "string" ? decisionInfo.decision_id : execution.decision_id;
+      const authorized = decisionInfo.authorized === true;
+      const requiresApproval = decisionInfo.requires_approval === true;
+      const targetWorkflowCode = typeof decisionInfo.target_workflow_code === "string"
+        ? decisionInfo.target_workflow_code
+        : (execution.input_data?.input_data?.target_workflow_code as string | undefined) || null;
+      if (authorized && !requiresApproval && targetWorkflowCode && decisionId) {
+        try {
+          const commandType = typeof decisionInfo.action === "string" ? decisionInfo.action : body.workflow_code;
+          const commandPayload = (decisionInfo.payload && typeof decisionInfo.payload === "object"
+            ? decisionInfo.payload
+            : execution.input_data?.input_data?.payload || {}) as Record<string, unknown>;
+          const commandId = await createCommand(admin, {
+            organization_id: body.organization_id,
+            action_id: execution.action_id,
+            decision_id: decisionId,
+            workflow_code: targetWorkflowCode,
+            command_type: commandType,
+            payload: commandPayload,
+            idempotency_key: `${resultKey}:command`,
+          });
+          const targetExecutionId = await createExecution(admin, {
+            event_type: "command_dispatch",
+            workflow_code: targetWorkflowCode,
+            request_id: crypto.randomUUID(),
+            correlation_id: execution.input_data?.correlation_id || execution.id,
+            idempotency_key: `${resultKey}:${targetWorkflowCode}`,
+            organization_id: body.organization_id,
+            case_id: execution.case_id,
+            conversation_id: execution.input_data?.conversation_id || null,
+            source_message_id: execution.input_data?.source_message_id || null,
+            action_id: execution.action_id,
+            decision_id: decisionId,
+            command_id: commandId,
+            input_data: { command_type: commandType, payload: commandPayload },
+          });
+          await triggerWorkflow({
+            organization_id: body.organization_id,
+            case_id: execution.case_id,
+            action_id: execution.action_id || undefined,
+            decision_id: decisionId,
+            command_id: commandId,
+            action_type: commandType,
+            workflow_code: targetWorkflowCode,
+            workflow_execution_id: targetExecutionId,
+            input_data: { command_type: commandType, payload: commandPayload },
+          });
+          await admin.from("commands").update({ status: "dispatched" }).eq("id", commandId);
+          dispatched = { command_id: commandId, target_workflow_code: targetWorkflowCode, workflow_execution_id: targetExecutionId };
+        } catch (dispatchError) {
+          await admin.from("workflow_events").insert({
+            organization_id: body.organization_id,
+            workflow_execution_id: execution.id,
+            case_id: execution.case_id,
+            event_type: "pe02.command.dispatch_failed",
+            event_data: { error: dispatchError instanceof Error ? dispatchError.message : "DISPATCH_FAILED" },
+            idempotency_key: `${resultKey}:dispatch_failed`,
+          });
+        }
+      }
+    }
+
     const { error: eventError } = await admin.from("workflow_events").insert({
       organization_id: body.organization_id,
       workflow_execution_id: execution.id,
       case_id: execution.case_id,
       event_type: `n8n.${body.workflow_code}.${status}`,
-      event_data: { output_data: outputData, error_data: errorData, n8n_execution_id: body.n8n_execution_id || null },
+      event_data: {
+        ...contractResult,
+        output_data: outputData,
+        error_data: errorData,
+        n8n_execution_id: body.n8n_execution_id || null,
+      },
       idempotency_key: resultKey,
     });
     if (eventError) throw eventError;
 
-    return Response.json({ success: true, workflow_execution_id: execution.id }, { headers: corsHeaders });
+    return Response.json({
+      success: true,
+      workflow_execution_id: execution.id,
+      result: contractResult,
+      dispatched,
+    }, { headers: corsHeaders });
   } catch (error) {
     return Response.json(
       { error: error instanceof Error ? error.message : "No se pudo procesar el callback de n8n" },

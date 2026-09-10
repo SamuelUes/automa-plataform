@@ -16,7 +16,19 @@ export type Decision = {
   command?: { type: string; payload: Record<string, unknown> } | null;
 };
 
+export const WORKFLOW_COMMAND_CONTRACT = "pulso-workflow-command.v1";
+export const WORKFLOW_RESULT_CONTRACT = "pulso-workflow-result.v1";
+
+export type WorkflowOutcome =
+  | "SUCCESS"
+  | "FAILED_CLOSED"
+  | "DUPLICATE_SUPPRESSED"
+  | "REQUIRE_APPROVAL"
+  | "CANCELLED"
+  | "RUNNING";
+
 export type IntegrationEnvelope = {
+  contract_version?: string;
   event_type: string;
   workflow_code: string;
   request_id: string;
@@ -74,6 +86,65 @@ export async function createExecution(admin: ReturnType<typeof createClient>, pa
   }).select("id").single();
   if (error) throw error;
   return data.id as string;
+}
+
+export async function createCommand(
+  admin: ReturnType<typeof createClient>,
+  params: {
+    organization_id: string;
+    action_id?: string | null;
+    decision_id: string;
+    workflow_code: string;
+    command_type: string;
+    payload?: Record<string, unknown>;
+    idempotency_key: string;
+  },
+) {
+  const { data: existing } = await admin
+    .from("commands")
+    .select("id,status,workflow_code")
+    .eq("idempotency_key", params.idempotency_key)
+    .maybeSingle();
+  if (existing) return existing.id as string;
+
+  const { data, error } = await admin.from("commands").insert({
+    organization_id: params.organization_id,
+    action_id: params.action_id || null,
+    decision_id: params.decision_id,
+    workflow_code: params.workflow_code,
+    command_type: params.command_type,
+    payload: params.payload || {},
+    status: "created",
+    idempotency_key: params.idempotency_key,
+  }).select("id").single();
+  if (error) throw error;
+  return data.id as string;
+}
+
+export function workflowOutcome(status: string, outputData: Record<string, unknown> = {}): WorkflowOutcome {
+  if (status === "running" || status === "waiting") return "RUNNING";
+  if (status === "cancelled") return "CANCELLED";
+  if (status !== "success") return "FAILED_CLOSED";
+  if (outputData.duplicate === true || outputData.outcome === "DUPLICATE_SUPPRESSED") return "DUPLICATE_SUPPRESSED";
+  if (outputData.requires_approval === true || outputData.outcome === "REQUIRE_APPROVAL") return "REQUIRE_APPROVAL";
+  return "SUCCESS";
+}
+
+export function workflowRetry(status: string, outputData: Record<string, unknown> = {}, errorData: Record<string, unknown> = {}) {
+  return {
+    attempted: Boolean(outputData.retry_attempt || outputData.retry),
+    reason: status === "failed" ? String(errorData.code || errorData.message || "FAILED_CLOSED") : null,
+  };
+}
+
+export function workflowExternalEffects(workflowCode: string, outputData: Record<string, unknown> = {}) {
+  const effects: string[] = [];
+  if (["PE01", "PE05", "PE08", "PE13"].includes(workflowCode)) effects.push("supabase_write");
+  if (["PE01", "PE05", "PE07", "PE10"].includes(workflowCode)) effects.push("outlook_access");
+  if (workflowCode === "PE07") effects.push("delivery_attempt");
+  if (["PE02", "PE03", "PE08"].includes(workflowCode)) effects.push("ai_processing");
+  if (outputData.external_id || outputData.message_id) effects.push("external_reference");
+  return effects;
 }
 
 export async function verifyOrganization(admin: ReturnType<typeof createClient>, organizationId: string, caseId?: string | null) {
