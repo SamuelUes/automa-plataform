@@ -40,6 +40,7 @@ export type Database = {
           full_name: string | null;
           email: string | null;
           avatar_url: string | null;
+          whatsapp_phone: string | null;
           role: UserRole;
           settings: Json;
           is_active: boolean;
@@ -52,6 +53,7 @@ export type Database = {
           full_name?: string | null;
           email?: string | null;
           avatar_url?: string | null;
+          whatsapp_phone?: string | null;
           role?: UserRole;
           settings?: Json;
           is_active?: boolean;
@@ -60,6 +62,7 @@ export type Database = {
           full_name?: string | null;
           email?: string | null;
           avatar_url?: string | null;
+          whatsapp_phone?: string | null;
           role?: UserRole;
           settings?: Json;
           is_active?: boolean;
@@ -367,16 +370,20 @@ export type Database = {
           user_id: string | null;
           sender_type: SenderType;
           role: MessageRole;
+          channel: string;
           content: string | null;
           content_json: Json;
           metadata: Json;
           created_at: string;
+          request_id: string | null;
+          context_id: string | null;
         };
         Insert: {
           id?: string;
           conversation_id: string;
           user_id?: string | null;
           sender_type: SenderType;
+          channel?: string;
           role: MessageRole;
           content?: string | null;
           content_json?: Json;

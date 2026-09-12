@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import type { FormEvent } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -12,6 +13,7 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { SearchableCombobox } from "@/components/dashboard/searchable-combobox";
 import {
   Check,
   ChevronRight,
@@ -25,6 +27,7 @@ import {
   Save,
   ShieldCheck,
   SlidersHorizontal,
+  TerminalSquare,
   Users,
   Workflow,
 } from "lucide-react";
@@ -39,6 +42,7 @@ type Section =
   | "notifications"
   | "ai"
   | "automation"
+  | "commands"
   | "security";
 
 type SettingsData = {
@@ -67,7 +71,11 @@ type SettingsData = {
     email: string | null;
     role: string;
     is_active: boolean;
+    whatsapp_phone: string | null;
   }>;
+  conversations: Array<{ id: string; case_id: string | null; title: string | null; status: string; updated_at: string }>;
+  cases: Array<{ id: string; case_number: number; title: string; status: string; updated_at: string }>;
+  commands: Array<{ id: string; workflow_code: string; command_type: string; status: string; payload: Record<string, unknown>; idempotency_key: string; created_at: string; decision_id: string }>;
 };
 
 const fallbackData: SettingsData = {
@@ -86,6 +94,9 @@ const fallbackData: SettingsData = {
   },
   departments: [],
   users: [],
+  conversations: [],
+  cases: [],
+  commands: [],
 };
 
 const sections: Array<{
@@ -100,6 +111,7 @@ const sections: Array<{
   { id: "notifications", label: "Notificaciones", icon: Mail },
   { id: "ai", label: "Configuración de IA", icon: Cpu },
   { id: "automation", label: "Automatizaciones", icon: Workflow },
+  { id: "commands", label: "Comandos", icon: TerminalSquare },
   { id: "security", label: "Seguridad", icon: ShieldCheck },
 ];
 
@@ -232,11 +244,30 @@ export default function SettingsPage() {
           email: inviteEmail,
           role: "agent",
           is_active: true,
+          whatsapp_phone: null,
         },
       ],
     }));
     setInviteEmail("");
     setMessage("Invitación enviada correctamente.");
+  }
+
+  async function createCommand(payload: Record<string, unknown>) {
+    setSaving(true);
+    setMessage(null);
+    const { data: response, error } = await createClient().functions.invoke("settings", {
+      body: { operation: "command_create", ...payload },
+    });
+    setSaving(false);
+    if (error) {
+      setMessage(response?.error || "No se pudo crear el comando.");
+      return null;
+    }
+    if (response?.command) {
+      setData((current) => ({ ...current, commands: [response.command, ...current.commands] }));
+    }
+    setMessage("Comando creado correctamente.");
+    return response?.command || null;
   }
 
   async function addDepartment() {
@@ -352,6 +383,12 @@ export default function SettingsPage() {
                   role,
                 })
               }
+              onWhatsAppChange={(userId, whatsappPhone) =>
+                void save("whatsapp_phone", {
+                  user_id: userId,
+                  whatsapp_phone: whatsappPhone,
+                })
+              }
               inviteEmail={inviteEmail}
               setInviteEmail={setInviteEmail}
               onInvite={() => void inviteUser()}
@@ -384,6 +421,15 @@ export default function SettingsPage() {
           )}
           {section === "ai" && <AISection />}
           {section === "automation" && <AutomationSection />}
+          {section === "commands" && (
+            <CommandsSection
+              conversations={data.conversations}
+              cases={data.cases}
+              commands={data.commands}
+              saving={saving}
+              onCreate={createCommand}
+            />
+          )}
           {section === "security" && <SecuritySection />}
 
           {message && (
@@ -567,12 +613,14 @@ function OrganizationSection({
 function UsersSection({
   users,
   onRoleChange,
+  onWhatsAppChange,
   inviteEmail,
   setInviteEmail,
   onInvite,
 }: {
   users: SettingsData["users"];
   onRoleChange: (userId: string, role: string) => void;
+  onWhatsAppChange: (userId: string, whatsappPhone: string | null) => void;
   inviteEmail: string;
   setInviteEmail: (value: string) => void;
   onInvite: () => void;
@@ -607,6 +655,14 @@ function UsersSection({
                     {user.email}
                   </p>
                 </div>
+
+                <Input
+                  aria-label={`WhatsApp de ${user.full_name}`}
+                  defaultValue={user.whatsapp_phone || ""}
+                  onBlur={(event) => onWhatsAppChange(user.id, event.target.value.trim() || null)}
+                  placeholder="whatsapp:+521..."
+                  className="h-9 w-full text-xs sm:w-48"
+                />
 
                 <Badge variant={user.is_active ? "success" : "secondary"}>
                   {user.is_active ? "Activo" : "Inactivo"}
@@ -909,6 +965,105 @@ function AutomationSection() {
               />
             </div>
           ))}
+        </CardContent>
+      </Card>
+    </>
+  );
+}
+
+function CommandsSection({
+  conversations,
+  cases,
+  commands,
+  saving,
+  onCreate,
+}: {
+  conversations: SettingsData["conversations"];
+  cases: SettingsData["cases"];
+  commands: SettingsData["commands"];
+  saving: boolean;
+  onCreate: (payload: Record<string, unknown>) => Promise<unknown>;
+}) {
+  const [mode, setMode] = useState<"pe03" | "advanced">("pe03");
+  const [conversationId, setConversationId] = useState("");
+  const [caseId, setCaseId] = useState("");
+  const [draft, setDraft] = useState("");
+  const [workflowCode, setWorkflowCode] = useState("PE03");
+  const [commandType, setCommandType] = useState("PREPARE_EMAIL_DRAFT");
+  const [advancedInput, setAdvancedInput] = useState('{\n  "draft": ""\n}');
+  const [idempotencyKey, setIdempotencyKey] = useState("");
+
+  const searchConversations = async (query: string) => conversations
+    .filter((item) => `${item.title || "Sin título"} ${item.id}`.toLowerCase().includes(query.toLowerCase()))
+    .map((item) => ({ value: item.id, label: item.title || "Conversación sin título", description: item.id }));
+  const searchCases = async (query: string) => cases
+    .filter((item) => `${item.case_number} ${item.title} ${item.id}`.toLowerCase().includes(query.toLowerCase()))
+    .map((item) => ({ value: item.id, label: `Caso #${item.case_number} · ${item.title}`, description: item.status }));
+  const searchWorkflows = async (query: string) => [
+    ["PE01", "Outlook Intake"], ["PE03", "Reply Orchestrator"], ["PE05", "Sent Watcher"],
+    ["PE07", "Delivery"], ["PE08", "Assistant Commands"], ["PE10", "Delivery Receipt"], ["PE13", "Case Conversation"],
+  ].filter(([code, label]) => `${code} ${label}`.toLowerCase().includes(query.toLowerCase()))
+    .map(([code, label]) => ({ value: code, label: `${code} · ${label}` }));
+
+  async function submitPE03(event: FormEvent) {
+    event.preventDefault();
+    if (!conversationId || !draft.trim()) return;
+    const result = await onCreate({ workflow_code: "PE03", command_type: "PREPARE_EMAIL_DRAFT", conversation_id: conversationId, case_id: caseId || null, input_data: { draft: draft.trim() }, idempotency_key: idempotencyKey.trim() || undefined });
+    if (result) { setDraft(""); setIdempotencyKey(""); }
+  }
+
+  async function submitAdvanced(event: FormEvent) {
+    event.preventDefault();
+    try {
+      const inputData = JSON.parse(advancedInput);
+      const result = await onCreate({ workflow_code: workflowCode, command_type: commandType, conversation_id: conversationId || null, case_id: caseId || null, input_data: inputData, idempotency_key: idempotencyKey.trim() || undefined });
+      if (result) { setAdvancedInput('{\n  "draft": ""\n}'); setIdempotencyKey(""); }
+    } catch { return; }
+  }
+
+  return (
+    <>
+      <SectionHeading eyebrow="Execution control" title="Comandos" description="Crea órdenes autorizadas para ejecutar workflows desde n8n." />
+      <div className="flex gap-2 border-b">
+        <Button type="button" variant={mode === "pe03" ? "default" : "ghost"} onClick={() => setMode("pe03")}>PE03 guiado</Button>
+        <Button type="button" variant={mode === "advanced" ? "default" : "ghost"} onClick={() => setMode("advanced")}>Comando avanzado</Button>
+      </div>
+      <Card>
+        <CardHeader><CardTitle>{mode === "pe03" ? "Preparar borrador de email" : "Crear comando genérico"}</CardTitle></CardHeader>
+        <CardContent>
+          <form className="space-y-4" onSubmit={mode === "pe03" ? submitPE03 : submitAdvanced}>
+            {mode === "advanced" && <>
+              <div className="space-y-2"><Label>Workflow</Label><SearchableCombobox value={workflowCode} onChange={setWorkflowCode} onSearch={searchWorkflows} placeholder="Selecciona un workflow" aria-label="Workflow" /></div>
+              <div className="space-y-2"><Label>Tipo de comando</Label><Input value={commandType} onChange={(event) => setCommandType(event.target.value)} required /></div>
+            </>}
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2"><Label>Conversación{mode === "pe03" && " *"}</Label><SearchableCombobox value={conversationId} onChange={setConversationId} onSearch={searchConversations} placeholder="Buscar conversación" emptyMessage="No hay conversaciones disponibles." aria-label="Conversación" /></div>
+              <div className="space-y-2"><Label>Caso</Label><SearchableCombobox value={caseId} onChange={setCaseId} onSearch={searchCases} placeholder="Buscar caso (opcional)" emptyMessage="No hay casos disponibles." aria-label="Caso" /></div>
+            </div>
+            {mode === "pe03" ? <div className="space-y-2"><Label>Instrucción del borrador *</Label><textarea className="min-h-24 w-full rounded-md border bg-background px-3 py-2 text-sm" value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="Describe la respuesta que debe preparar la IA..." required /></div> : <div className="space-y-2"><Label>Input data JSON *</Label><textarea className="min-h-40 w-full rounded-md border bg-background px-3 py-2 font-mono text-xs" value={advancedInput} onChange={(event) => setAdvancedInput(event.target.value)} required /></div>}
+            <div className="space-y-2"><Label>Idempotency key</Label><Input value={idempotencyKey} onChange={(event) => setIdempotencyKey(event.target.value)} placeholder="Opcional; se genera automáticamente" /></div>
+            <Button type="submit" disabled={saving || (mode === "pe03" && (!conversationId || !draft.trim()))}>{saving ? <Loader2 className="animate-spin" /> : <Plus />} Crear comando</Button>
+          </form>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle>Últimos comandos</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          {!commands.length ? (
+            <p className="text-sm text-muted-foreground">Todavía no hay comandos creados.</p>
+          ) : (
+            commands.slice(0, 10).map((command) => (
+              <div key={command.id} className="flex items-center justify-between gap-4 rounded-lg border p-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium">{command.workflow_code} · {command.command_type}</p>
+                  <p className="truncate text-xs text-muted-foreground">{command.idempotency_key}</p>
+                </div>
+                <Badge variant={command.status === "created" ? "secondary" : "success"}>{command.status}</Badge>
+              </div>
+            ))
+          )}
         </CardContent>
       </Card>
     </>

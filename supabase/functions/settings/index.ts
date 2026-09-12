@@ -15,6 +15,15 @@ const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
 const anonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
 const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
+function normalizeWhatsAppPhone(value: unknown) {
+  if (typeof value !== "string") return null;
+  const compact = value.trim().replace(/[\s()-]/g, "");
+  const digits = compact.replace(/^whatsapp:/i, "");
+  const normalized = digits.startsWith("+") ? digits : `+${digits}`;
+  if (!/^\+[1-9]\d{7,14}$/.test(normalized)) return null;
+  return `whatsapp:${normalized}`;
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -78,7 +87,7 @@ Deno.serve(async (req: Request) => {
     const isAdmin = profile.role === "owner" || profile.role === "admin";
 
     if (operation === "get") {
-      const [organization, departments, users] = await Promise.all([
+      const [organization, departments, users, conversations, cases, commands] = await Promise.all([
         userClient
           .from("organizations")
           .select("id,name,slug,settings,is_active,created_at,updated_at")
@@ -91,9 +100,27 @@ Deno.serve(async (req: Request) => {
           .order("name"),
         userClient
           .from("users")
-          .select("id,full_name,email,avatar_url,role,is_active,created_at,updated_at")
+          .select("id,full_name,email,avatar_url,role,is_active,whatsapp_phone,created_at,updated_at")
           .eq("organization_id", organizationId)
           .order("full_name"),
+        userClient
+          .from("conversations")
+          .select("id,case_id,title,status,updated_at")
+          .eq("organization_id", organizationId)
+          .order("updated_at", { ascending: false })
+          .limit(100),
+        userClient
+          .from("cases")
+          .select("id,case_number,title,status,updated_at")
+          .eq("organization_id", organizationId)
+          .order("updated_at", { ascending: false })
+          .limit(100),
+        userClient
+          .from("commands")
+          .select("id,workflow_code,command_type,status,payload,idempotency_key,created_at,decision_id")
+          .eq("organization_id", organizationId)
+          .order("created_at", { ascending: false })
+          .limit(100),
       ]);
 
       return Response.json(
@@ -102,6 +129,9 @@ Deno.serve(async (req: Request) => {
           organization: organization.data,
           departments: departments.data || [],
           users: users.data || [],
+          conversations: conversations.data || [],
+          cases: cases.data || [],
+          commands: commands.data || [],
         },
         { headers: corsHeaders }
       );
@@ -158,6 +188,134 @@ Deno.serve(async (req: Request) => {
         { error: "No tienes permisos para administrar esta configuración." },
         { status: 403, headers: corsHeaders }
       );
+    }
+
+    if (operation === "commands_get") {
+      const workflowCode = typeof body.workflow_code === "string" ? body.workflow_code.trim().toUpperCase() : "";
+      const status = typeof body.status === "string" ? body.status.trim() : "";
+      let query = adminClient
+        .from("commands")
+        .select("id,organization_id,action_id,decision_id,workflow_code,command_type,payload,status,idempotency_key,created_at")
+        .eq("organization_id", organizationId)
+        .order("created_at", { ascending: false })
+        .limit(100);
+      if (workflowCode) query = query.eq("workflow_code", workflowCode);
+      if (status) query = query.eq("status", status);
+      const { data, error } = await query;
+      if (error) throw error;
+      return Response.json({ commands: data || [] }, { headers: corsHeaders });
+    }
+
+    if (operation === "command_create") {
+      const workflowCode = typeof body.workflow_code === "string" ? body.workflow_code.trim().toUpperCase() : "";
+      const commandType = typeof body.command_type === "string" ? body.command_type.trim() : "PREPARE_EMAIL_DRAFT";
+      const idempotencyKey = typeof body.idempotency_key === "string" ? body.idempotency_key.trim() : crypto.randomUUID();
+      const inputData = body.input_data;
+      const conversationId = typeof body.conversation_id === "string" && body.conversation_id ? body.conversation_id : null;
+      const caseId = typeof body.case_id === "string" && body.case_id ? body.case_id : null;
+      const supportedWorkflow = /^PE(?:0[1-9]|1[0-3])$/.test(workflowCode);
+
+      if (!supportedWorkflow || !commandType || typeof inputData !== "object" || inputData === null || Array.isArray(inputData)) {
+        return Response.json({ error: "Los datos del comando no son válidos." }, { status: 422, headers: corsHeaders });
+      }
+
+      const draft = typeof (inputData as Record<string, unknown>).draft === "string"
+        ? (inputData as Record<string, unknown>).draft as string
+        : "";
+      if (workflowCode === "PE03" && !draft.trim()) {
+        return Response.json({ error: "PE03 requiere input_data.draft." }, { status: 422, headers: corsHeaders });
+      }
+
+      if (conversationId) {
+        const { data: conversation } = await adminClient
+          .from("conversations")
+          .select("id")
+          .eq("id", conversationId)
+          .eq("organization_id", organizationId)
+          .maybeSingle();
+        if (!conversation) return Response.json({ error: "Conversación no encontrada en tu organización." }, { status: 404, headers: corsHeaders });
+      }
+
+      if (caseId) {
+        const { data: caseRow } = await adminClient
+          .from("cases")
+          .select("id")
+          .eq("id", caseId)
+          .eq("organization_id", organizationId)
+          .maybeSingle();
+        if (!caseRow) return Response.json({ error: "Caso no encontrado en tu organización." }, { status: 404, headers: corsHeaders });
+      }
+
+      const { data: existing } = await adminClient
+        .from("commands")
+        .select("id,decision_id,workflow_code,command_type,payload,status,idempotency_key,created_at")
+        .eq("idempotency_key", idempotencyKey)
+        .maybeSingle();
+      if (existing) return Response.json({ command: existing, duplicate: true }, { headers: corsHeaders });
+
+      const { data: decision, error: decisionError } = await adminClient
+        .from("authority_decisions")
+        .insert({
+          organization_id: organizationId,
+          case_id: caseId,
+          conversation_id: conversationId,
+          decision: "AUTO_ELIGIBLE",
+          action_type: commandType,
+          authorized: true,
+          requires_approval: false,
+          reason: "Comando creado por un administrador desde Settings.",
+          evidence: { source: "settings", user_id: user.id, workflow_code: workflowCode },
+          idempotency_key: `decision:${idempotencyKey}`,
+        })
+        .select("id")
+        .single();
+      if (decisionError) throw decisionError;
+
+      const { data: command, error: commandError } = await adminClient
+        .from("commands")
+        .insert({
+          organization_id: organizationId,
+          decision_id: decision.id,
+          workflow_code: workflowCode,
+          command_type: commandType,
+          payload: { conversation_id: conversationId, case_id: caseId, input_data: inputData },
+          status: "created",
+          idempotency_key: idempotencyKey,
+        })
+        .select("id,organization_id,decision_id,workflow_code,command_type,payload,status,idempotency_key,created_at")
+        .single();
+      if (commandError) throw commandError;
+
+      return Response.json({ command, decision_id: decision.id }, { status: 201, headers: corsHeaders });
+    }
+
+    if (operation === "whatsapp_phone") {
+      const userId = typeof body.user_id === "string" ? body.user_id : "";
+      const whatsappPhone = body.whatsapp_phone === null || body.whatsapp_phone === ""
+        ? null
+        : normalizeWhatsAppPhone(body.whatsapp_phone);
+      if (!userId || (body.whatsapp_phone && !whatsappPhone)) {
+        return Response.json({ error: "El número debe usar el formato whatsapp:+5215555555555." }, { status: 422, headers: corsHeaders });
+      }
+      const { data: target } = await adminClient
+        .from("users")
+        .select("id,organization_id")
+        .eq("id", userId)
+        .eq("organization_id", organizationId)
+        .maybeSingle();
+      if (!target) return Response.json({ error: "Usuario no encontrado en tu organización." }, { status: 404, headers: corsHeaders });
+      const { data, error } = await adminClient
+        .from("users")
+        .update({ whatsapp_phone: whatsappPhone })
+        .eq("id", userId)
+        .eq("organization_id", organizationId)
+        .select("id,whatsapp_phone")
+        .single();
+      if (error) {
+        if (error.code === "23505") return Response.json({ error: "Ese número ya está asociado a otro usuario." }, { status: 409, headers: corsHeaders });
+        throw error;
+      }
+      return Response.json({ user: data }, { headers: corsHeaders });
     }
 
     if (operation === "invite_user") {

@@ -13,6 +13,7 @@ export function useRealtimeTable(table: string, onChange: (payload: RealtimePost
   const instanceId = useId().replaceAll(":", "");
 
   useEffect(() => {
+    if (!filter) return;
     const client = createClient();
     const channel = client
       .channel(`realtime-${table}-${instanceId}`)

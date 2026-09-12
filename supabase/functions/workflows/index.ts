@@ -3,7 +3,63 @@ declare const Deno: { serve(handler: (request: Request) => Response | Promise<Re
 import { corsHeaders } from "../_shared/cors.ts";
 import { getAuthedClient } from "../_shared/auth.ts";
 import { adminClient, createExecution } from "../_shared/integration.ts";
-import { getWorkflowExecution, triggerWorkflow } from "../_shared/n8n/client.ts";
+import { getWorkflowExecution, listWorkflows, triggerWorkflow } from "../_shared/n8n/client.ts";
+
+type RuntimeStatusRow = {
+  workflow_id: string;
+  status: "active" | "inactive" | "unavailable" | "unknown";
+  last_changed_at: string | null;
+};
+
+async function syncRuntimeStatus(organizationId: string, definitions: Array<Record<string, unknown>>) {
+  const runtime = await listWorkflows();
+  const n8nWorkflows = runtime.data || [];
+  const n8nById = new Map(n8nWorkflows.map((workflow) => [String(workflow.id), workflow]));
+  const n8nByCode = new Map(
+    n8nWorkflows
+      .map((workflow) => {
+        const code = typeof workflow.name === "string" ? workflow.name.match(/^(PE\d+)/)?.[1] : undefined;
+        return code ? [code, workflow] as const : null;
+      })
+      .filter((entry): entry is readonly [string, (typeof n8nWorkflows)[number]] => Boolean(entry)),
+  );
+  const rows = definitions.map((definition) => {
+    const code = String(definition.code);
+    const n8nWorkflow = definition.n8n_workflow_id
+      ? n8nById.get(String(definition.n8n_workflow_id))
+      : n8nByCode.get(code);
+    const active = n8nWorkflow?.active === true;
+    return {
+      workflow_id: definition.id,
+      organization_id: organizationId,
+      workflow_code: definition.code,
+      status: n8nWorkflow ? (active ? "active" : "inactive") : "unavailable",
+      available: Boolean(n8nWorkflow && active),
+      last_synced_at: new Date().toISOString(),
+    };
+  });
+  if (!rows.length) return;
+  const admin = adminClient();
+  const { data: previous } = await admin
+    .from("workflow_runtime_status")
+    .select("workflow_id,status,last_changed_at")
+    .eq("organization_id", organizationId);
+  const previousRows = (previous || []) as RuntimeStatusRow[];
+  const previousById = new Map(previousRows.map((row: RuntimeStatusRow) => [row.workflow_id, row]));
+  const changedAt = rows.map((row) => {
+    const workflowId = String(row.workflow_id);
+    const lastSyncedAt = String(row.last_synced_at);
+    const previousRow = previousById.get(workflowId);
+    return {
+      ...row,
+      last_changed_at: previousRow?.status === row.status
+        ? previousRow.last_changed_at || lastSyncedAt
+        : lastSyncedAt,
+    };
+  });
+  const { error } = await admin.from("workflow_runtime_status").upsert(changedAt, { onConflict: "workflow_id" });
+  if (error) throw error;
+}
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
@@ -14,10 +70,56 @@ Deno.serve(async (req: Request) => {
    
     if (!profile.data) return Response.json({ error: "Usuario sin organización" }, { status: 403, headers: corsHeaders });
    
-    if (req.method === "GET" || body.operation === "list") {
-      const { data, error } = await client.from("workflow_definitions").select("id,code,name,description,n8n_workflow_id,version,is_active,configuration,created_at,updated_at").order("code");
+    if (body.operation === "sync_status") {
+      const { data: definitions, error } = await client
+        .from("workflow_definitions")
+        .select("id,code,n8n_workflow_id")
+        .order("code");
       if (error) throw error;
-      return Response.json({ data: data || [] }, { headers: corsHeaders });
+      await syncRuntimeStatus(profile.data.organization_id, (definitions || []) as Array<Record<string, unknown>>);
+      return Response.json({ data: { synced: definitions?.length || 0 } }, { headers: corsHeaders });
+    }
+
+    if (req.method === "GET" || body.operation === "list") {
+      const { data, error } = await client
+        .from("workflow_definitions")
+        .select("id,code,name,description,n8n_workflow_id,version,is_active,configuration,created_at,updated_at")
+        .order("code");
+      if (error) throw error;
+      const definitions = (data || []) as Array<Record<string, unknown>>;
+      await syncRuntimeStatus(profile.data.organization_id, definitions);
+      const { data: runtime, error: runtimeError } = await client
+        .from("workflow_runtime_status")
+        .select("workflow_id,status,available,last_synced_at,last_changed_at")
+        .eq("organization_id", profile.data.organization_id);
+      if (runtimeError) throw runtimeError;
+      const { data: stats, error: statsError } = await client.rpc("get_workflow_dashboard_stats", {
+        p_organization_id: profile.data.organization_id,
+        p_days: 30,
+      });
+      if (statsError) throw statsError;
+      const runtimeRows = (runtime || []) as RuntimeStatusRow[];
+      const runtimeByWorkflow = new Map(runtimeRows.map((item: RuntimeStatusRow) => [item.workflow_id, item]));
+      const statsByWorkflow = new Map((stats || []).map((item: Record<string, unknown>) => [String(item.workflow_id), item]));
+      return Response.json({
+        data: definitions.map((definition) => ({
+          ...definition,
+          runtime_status: runtimeByWorkflow.get(String(definition.id)) || {
+            status: "unknown",
+            available: false,
+            last_synced_at: null,
+            last_changed_at: null,
+          },
+          stats: statsByWorkflow.get(String(definition.id)) || {
+            executions: 0,
+            errors: 0,
+            avg_duration_ms: null,
+            last_run: null,
+            last_status: null,
+            events: 0,
+          },
+        })),
+      }, { headers: corsHeaders });
     }
     if (body.execution_id) return Response.json({ data: await getWorkflowExecution(body.execution_id) }, { headers: corsHeaders });
     if (!body.workflow_code && !body.action_id) return Response.json({ error: "workflow_code o action_id requerido" }, 

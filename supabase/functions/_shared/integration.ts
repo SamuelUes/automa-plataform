@@ -41,6 +41,10 @@ export type IntegrationEnvelope = {
   source_message_id?: string | null;
   action_id?: string | null;
   workflow_execution_id?: string | null;
+  parent_workflow_execution_id?: string | null;
+  orchestration_id?: string | null;
+  tool_call_id?: string | null;
+  source_channel?: "dashboard" | "whatsapp";
   decision_id?: string | null;
   command_id?: string | null;
   input_data?: Record<string, unknown>;
@@ -68,6 +72,12 @@ export function callbackUrl() {
   return `${url.replace(/\/$/, "")}/functions/v1/webhooks`;
 }
 
+export function conversationContextUrl() {
+  const url = Deno.env.get("SUPABASE_URL");
+  if (!url) throw new Error("SUPABASE_URL_NOT_CONFIGURED");
+  return `${url.replace(/\/$/, "")}/functions/v1/conversation-context`;
+}
+
 export async function createExecution(admin: ReturnType<typeof createClient>, payload: IntegrationEnvelope, workflowId?: string | null) {
   const { data, error } = await admin.from("workflow_executions").insert({
     workflow_id: workflowId || null,
@@ -82,10 +92,90 @@ export async function createExecution(admin: ReturnType<typeof createClient>, pa
     decision_id: payload.decision_id || null,
     command_id: payload.command_id || null,
     workflow_code: payload.workflow_code,
+    parent_workflow_execution_id: payload.parent_workflow_execution_id || null,
+    orchestration_id: payload.orchestration_id || null,
+    tool_call_id: payload.tool_call_id || null,
     input_data: payload,
   }).select("id").single();
   if (error) throw error;
   return data.id as string;
+}
+
+const progressLabels: Record<string, string> = {
+  received: "Solicitud recibida",
+  classifying: "Entendiendo tu solicitud...",
+  direct_response: "Preparando la respuesta...",
+  orchestrator_selected: "Buscando el flujo adecuado...",
+  workflow_selected: "Seleccionando la operación...",
+  workflow_running: "Procesando la solicitud...",
+  response_preparing: "Preparando la respuesta final...",
+  completed: "Respuesta disponible",
+  needs_clarification: "Necesito una aclaración",
+  requires_approval: "Se necesita tu confirmación",
+  failed: "No se pudo completar la solicitud",
+};
+
+export async function startConversationActivity(
+  admin: ReturnType<typeof createClient>,
+  params: { conversation_id: string; organization_id: string; source_workflow: string; timer_minutes?: number },
+) {
+  const timerId = crypto.randomUUID();
+  const deadline = new Date(Date.now() + (params.timer_minutes || 15) * 60_000).toISOString();
+  const { data, error } = await admin.from("conversations").select("inactivity_generation,status").eq("id", params.conversation_id).eq("organization_id", params.organization_id).maybeSingle();
+  if (error) throw error;
+  if (!data) throw new Error("CONVERSATION_NOT_FOUND");
+  const generation = Number(data.inactivity_generation || 0) + 1;
+  const { data: updated, error: updateError } = await admin.from("conversations").update({
+    status: data.status === "closed" ? "active" : data.status === "paused" ? "active" : data.status,
+    paused_at: null,
+    closed_at: null,
+    last_activity_at: new Date().toISOString(),
+    inactivity_generation: generation,
+    active_inactivity_timer_id: timerId,
+    inactivity_deadline_at: deadline,
+  }).eq("id", params.conversation_id).eq("organization_id", params.organization_id).select("id,status,last_activity_at,inactivity_generation,active_inactivity_timer_id,inactivity_deadline_at").single();
+  if (updateError) throw updateError;
+  return { conversation: updated, timer_id: timerId, generation, deadline, source_workflow: params.source_workflow };
+}
+
+export async function persistPendingIntent(
+  admin: ReturnType<typeof createClient>,
+  params: { conversation_id: string; organization_id: string; intent: Record<string, unknown> | null },
+) {
+  const { error } = await admin.from("conversations").update({ pending_intent: params.intent || {} }).eq("id", params.conversation_id).eq("organization_id", params.organization_id);
+  if (error) throw error;
+}
+
+export async function recordAssistantProgress(
+  admin: ReturnType<typeof createClient>,
+  params: {
+    organization_id: string;
+    conversation_id: string;
+    request_id: string;
+    workflow_execution_id?: string | null;
+    source_channel?: "dashboard" | "whatsapp";
+    status: string;
+    label?: string;
+    progress_order?: number;
+    metadata?: Record<string, unknown>;
+  },
+) {
+  if (params.source_channel === "whatsapp") return;
+  const allowedStatuses = new Set(Object.keys(progressLabels));
+  const safeStatus = allowedStatuses.has(params.status) ? params.status : "workflow_running";
+  const { error } = await admin.from("assistant_request_progress").upsert({
+    organization_id: params.organization_id,
+    conversation_id: params.conversation_id,
+    request_id: params.request_id,
+    workflow_execution_id: params.workflow_execution_id || null,
+    source_channel: params.source_channel || "dashboard",
+    status: safeStatus,
+    label: params.label || progressLabels[safeStatus] || "Procesando la solicitud...",
+    progress_order: params.progress_order || 0,
+    metadata: params.metadata || {},
+    updated_at: new Date().toISOString(),
+  }, { onConflict: "organization_id,request_id,status" });
+  if (error) throw error;
 }
 
 export async function createCommand(
@@ -160,7 +250,10 @@ export async function invokeN8n(payload: IntegrationEnvelope) {
   const url = Deno.env.get("N8N_WEBHOOK_URL");
   const secret = Deno.env.get("N8N_INGRESS_SECRET");
   if (!url || !secret) throw new Error("N8N_NOT_CONFIGURED");
-  const response = await fetch(`${url.replace(/\/$/, "")}/webhook/prologistica`, {
+  const workflowPath = payload.workflow_code
+    ? `/webhook/prologistica-${payload.workflow_code.toLowerCase()}`
+    : "/webhook/prologistica";
+  const response = await fetch(`${url.replace(/\/$/, "")}${workflowPath}`, {
     method: "POST",
     headers: { "content-type": "application/json", "x-prologistica-secret": secret },
     body: JSON.stringify(payload),

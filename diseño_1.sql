@@ -654,7 +654,48 @@ create table if not exists public.conversations (
 
 
 -- ============================================================
--- 13. MESSAGES
+-- 13. CONTEXT
+-- ============================================================
+
+create table if not exists public.context (
+
+    id uuid primary key default gen_random_uuid(),
+
+    organization_id uuid not null
+        references public.organizations(id)
+        on delete cascade,
+
+    conversation_id uuid not null
+        references public.conversations(id)
+        on delete cascade,
+
+    case_id uuid
+        references public.cases(id)
+        on delete cascade,
+
+    context_type text not null default 'conversation',
+
+    content_json jsonb not null default '{}'::jsonb,
+
+    version integer not null default 1,
+
+    created_at timestamptz not null default now(),
+
+    updated_at timestamptz not null default now(),
+
+    constraint context_type_valid
+        check (context_type in ('conversation', 'case', 'assistant')),
+
+    constraint context_version_positive
+        check (version > 0),
+
+    unique (conversation_id)
+
+);
+
+
+-- ============================================================
+-- 14. MESSAGES
 -- ============================================================
 
 create table if not exists public.messages (
@@ -664,6 +705,10 @@ create table if not exists public.messages (
     conversation_id uuid not null
         references public.conversations(id)
         on delete cascade,
+
+    context_id uuid
+        references public.context(id)
+        on delete set null,
 
     user_id uuid
         references public.users(id)

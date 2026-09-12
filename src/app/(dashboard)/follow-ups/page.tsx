@@ -13,7 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { EmptyState, ErrorState, LoadingState } from "@/components/ui/states";
-import { CalendarClock, Check, Clock3, MoreHorizontal, Play, Plus } from "lucide-react";
+import { CalendarClock, Check, CheckCircle2, Clock3, MoreHorizontal, Play, Plus, ShieldCheck } from "lucide-react";
 
 const statusLabel = { overdue: "Vencido", today: "Hoy", upcoming: "Próximo", completed: "Completado" };
 function getFollowUpStatus(status: string, scheduledFor: string): FollowUp["status"] {
@@ -36,11 +36,12 @@ export default function FollowUpsPage() {
     setProcessing("new");
     try { await createAction("schedule_follow_up", { 
       case_id: values.case_id, 
-      input_data: { 
-        ...values, 
-        scheduled_for: new Date(values.scheduled_for).toISOString() 
-      } 
-    }); toast.success("Seguimiento enviado a procesamiento."); setDialogOpen(false); }
+      idempotency_key: `schedule_follow_up:${values.case_id}:${new Date().toISOString()}`,
+      input_data: {
+        ...values,
+        scheduled_for: new Date(values.scheduled_for).toISOString(),
+      },
+    }); toast.success("Seguimiento programado."); setDialogOpen(false); }
     catch (error) { toast.error(getOperationError(error)); }
     finally { setProcessing(null); }
   }
@@ -73,7 +74,15 @@ export default function FollowUpsPage() {
     const scheduledFor = new Date(item.scheduledFor);
     scheduledFor.setTime(scheduledFor.getTime() + amount * (unit === "hours" ? 60 * 60 * 1000 : 24 * 60 * 60 * 1000));
     try {
-      await createAction("schedule_follow_up", { case_id: item.caseId || undefined, input_data: { follow_up_id: item.id, scheduled_for: scheduledFor.toISOString(), reason: item.reason } });
+      await createAction("schedule_follow_up", {
+        case_id: item.caseId || undefined,
+        idempotency_key: `schedule_follow_up:${item.id}:${scheduledFor.toISOString()}`,
+        input_data: { 
+          follow_up_id: item.id, 
+          scheduled_for: scheduledFor.toISOString(), 
+          reason: item.reason 
+        },
+      });
       setFollowUps((current) => current.map((entry) => entry.id === item.id ? { ...entry, scheduledFor: scheduledFor.toISOString(), status: "upcoming" } : entry));
       toast.success("Seguimiento reprogramado.");
       setActionItem(null);
@@ -81,15 +90,27 @@ export default function FollowUpsPage() {
     finally { setProcessing(null); }
   }
 
-  async function runAction(item: FollowUp, action: "schedule_follow_up" | "resolve_case") { setProcessing(item.id); 
-    try { await createAction(action, { 
-      case_id: item.caseId || undefined, 
-      input_data: { follow_up_id: item.id } 
-    }); 
-    if (action === "resolve_case") setFollowUps((current) => current.map((entry) => entry.id === item.id ? { ...entry, status: "completed" } : entry));
-    if (action === "resolve_case") { toast.success("Seguimiento completado."); setActionItem(null); }
+  async function runAction(item: FollowUp, action: "schedule_follow_up" | "resolve_case" | "verify_case" | "close_case") {
+    setProcessing(item.id);
+    try {
+      const result = await createAction(action, {
+        case_id: item.caseId || undefined,
+        idempotency_key: `${action}:${item.id}:${action === "schedule_follow_up" ? "execute" : "request"}`,
+        input_data: action === "schedule_follow_up" ? { follow_up_id: item.id, execute_now: true } : { follow_up_id: item.id },
+      });
+      const completed = result?.action?.status === "completed";
+      if (completed && action === "resolve_case") {
+        setFollowUps((current) => current.map((entry) => entry.id === item.id ? { ...entry, status: "completed" } : entry));
+        toast.success("Seguimiento completado.");
+      } else if (completed) {
+        toast.success(action === "schedule_follow_up" ? "Seguimiento ejecutado." : "Caso actualizado.");
+      } else {
+        toast.success("La acción requiere aprobación.");
+      }
+      setActionItem(null);
     } catch (error) { toast.error(getOperationError(error)); }
-    finally { setProcessing(null); } }
+    finally { setProcessing(null); }
+  }
   
   return (
   <>
@@ -99,10 +120,49 @@ export default function FollowUpsPage() {
     title="Opciones del seguimiento"
     description={actionItem ? `${actionItem.title}. Elige una acción operativa.` : "Elige una acción operativa."}
     actions={actionItem ? [
-      { id: "hour", label: "Posponer una hora", description: "Mueve el seguimiento una hora hacia adelante.", workflow: "PE06", icon: <Clock3 className="h-4 w-4" />, onSelect: () => void reschedule(actionItem, 1, "hours") },
-      { id: "tomorrow", label: "Posponer mañana", description: "Mueve el seguimiento 24 horas.", workflow: "PE06", icon: <CalendarClock className="h-4 w-4" />, onSelect: () => void reschedule(actionItem, 1, "days") },
-      { id: "week", label: "Posponer una semana", description: "Mueve el seguimiento siete días.", workflow: "PE06", icon: <CalendarClock className="h-4 w-4" />, onSelect: () => void reschedule(actionItem, 7, "days") },
-      { id: "complete", label: "Completar", description: "Marca el seguimiento después de confirmar la acción.", workflow: "PE12", icon: <Check className="h-4 w-4" />, tone: "warning" as const, onSelect: () => void runAction(actionItem, "resolve_case") },
+      { id: "execute", 
+        label: "Ejecutar ahora", 
+        description: "Registra el intento de seguimiento inmediatamente.", 
+        workflow: "PE06", 
+        icon: <Play className="h-4 w-4" />, onSelect: () => void runAction(actionItem, "schedule_follow_up") },
+      { id: "hour", 
+        label: "Posponer una hora", 
+        description: "Mueve el seguimiento una hora hacia adelante.", 
+        workflow: "PE06", 
+        icon: <Clock3 className="h-4 w-4" />, onSelect: () => void reschedule(actionItem, 1, "hours") },
+      { id: "tomorrow", 
+        label: "Posponer para mañana", 
+        description: "Mueve el seguimiento 24 horas.", 
+        workflow: "PE06", 
+        icon: <CalendarClock className="h-4 w-4" />, onSelect: () => void reschedule(actionItem, 1, "days") },
+      { id: "week", 
+        label: "Posponer una semana", 
+        description: "Mueve el seguimiento siete días.", 
+        workflow: "PE06", 
+        icon: <CalendarClock className="h-4 w-4" />, onSelect: () => void reschedule(actionItem, 7, "days") },
+      { id: "verify", 
+        label: "Verificar caso", 
+        description: "Confirma que el caso cumple las condiciones de resolución.", 
+        workflow: "PE12", 
+        requiresApproval: true, 
+        icon: <ShieldCheck className="h-4 w-4" />, 
+        onSelect: () => void runAction(actionItem, "verify_case") },
+      { id: "complete", 
+        label: "Resolver seguimiento", 
+        description: "Marca el seguimiento y el caso como resueltos.", 
+        workflow: "PE12", 
+        requiresApproval: true, 
+        icon: <Check className="h-4 w-4" />, 
+        tone: "warning" as const, 
+        onSelect: () => void runAction(actionItem, "resolve_case") },
+      { id: "close", 
+        label: "Cerrar caso", 
+        description: "Cierra definitivamente el caso asociado.", 
+        workflow: "PE12", 
+        requiresApproval: true, 
+        icon: <CheckCircle2 className="h-4 w-4" />, 
+        tone: "danger" as const, 
+        onSelect: () => void runAction(actionItem, "close_case") },
     ] : []}
   />
   <div className="space-y-7">

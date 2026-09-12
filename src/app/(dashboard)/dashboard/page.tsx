@@ -54,19 +54,26 @@ async function getDashboardSummary() {
   };
 }
 
-async function getWorkflowSummaries(): Promise<WorkflowSummary[]> {
+async function getWorkflowSummaries(): Promise<{ workflows: WorkflowSummary[]; total: number }> {
   const supabase = await createClient();
-  const { data } = await supabase.from("workflow_definitions").select("id,code,name,is_active").order("code").limit(12);
-  return (data ?? []) as unknown as WorkflowSummary[];
+  const { data, count } = await supabase
+    .from("workflow_definitions")
+    .select("id,code,name,is_active", { count: "exact" })
+    .order("code");
+  return {
+    workflows: (data ?? []) as unknown as WorkflowSummary[],
+    total: count ?? data?.length ?? 0,
+  };
 }
 
 export default async function DashboardPage() {
-  const [cases, userName, summary, workflowSummaries] = await Promise.all([
+  const [cases, userName, summary, workflowSummary] = await Promise.all([
     getCases(),
     getCurrentUserName(),
     getDashboardSummary(),
     getWorkflowSummaries(),
   ]);
+  const workflowSummaries = workflowSummary.workflows;
   const attention = cases.filter((c) => ["waiting_approval", "waiting_human", "waiting_verification", "follow_up"].includes(c.status as string)).slice(0, 4);
   return (
   <div className="min-w-0 space-y-8">
@@ -189,8 +196,10 @@ export default async function DashboardPage() {
     <Card>
       <CardHeader className="flex-row items-center justify-between pb-4">
         <div>
-          <CardTitle className="text-[13px] uppercase tracking-wide">Estado de automatizaciones</CardTitle>
-          <p className="text-xs text-muted-foreground mt-1">{workflowSummaries.length} workflows configurados en tu operación.</p>
+          <CardTitle className="text-[13px] uppercase tracking-wide">
+            Estado de automatizaciones
+          </CardTitle>
+          <p className="text-xs text-muted-foreground mt-1">{workflowSummary.total} {workflowSummary.total === 1 ? "workflow configurado" : "workflows configurados"} en tu operación.</p>
         </div>
         <Link href="/automations" className="text-xs text-muted-foreground hover:text-foreground flex gap-1 items-center">
           Ver automatizaciones <ChevronRight className="h-3.5 w-3.5" />

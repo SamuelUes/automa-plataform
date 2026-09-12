@@ -1,0 +1,72 @@
+{
+  "contractVersion": "pulso-workflow-result.v1",
+  "workflows": [
+    {
+      "code": "PE00",
+      "workflowId": "lrb5WaELPE9dmkqR",
+      "trigger": "On workflow error",
+      "mode": "configuration-only",
+      "expected": ["errorTrigger", "error_callback", "active"]
+    },
+    {
+      "code": "PE01",
+      "workflowId": "84hWG4KDG6fuZCKk",
+      "trigger": "PE01 Intake Webhook",
+      "mode": "contract-only",
+      "expected": ["outlook_read", "anthropic_extract", "supabase_persist", "callback"]
+    },
+    {
+      "code": "PE03",
+      "workflowId": "FiN86kVzphFQeFP8",
+      "trigger": "PE03 Reply Webhook",
+      "mode": "contract-only",
+      "expected": ["command_validation", "anthropic_draft", "callback"]
+    },
+    {
+      "code": "PE05",
+      "workflowId": "52haTE8AfCfhhzlp",
+      "trigger": "PE05 Sent Watcher Webhook",
+      "mode": "contract-only",
+      "expected": ["outlook_read", "reply_body_format", "callback"]
+    },
+    {
+      "code": "PE07",
+      "workflowId": "cC76MFgF0omF0kuh",
+      "trigger": "PE07 Delivery Webhook",
+      "mode": "contract-only-no-external-effects",
+      "expected": ["command_validation", "email_or_whatsapp_router", "callback"],
+      "blockedEffects": ["outlook_send", "twilio_send", "supabase_write"]
+    },
+    {
+      "code": "PE08",
+      "workflowId": "BuFaP3nCOrFNV0Wt",
+      "trigger": "PE08 Assistant Webhook",
+      "mode": "contract-only",
+      "expected": ["channel_normalization", "conversation_scope", "context_lookup", "anthropic_sonnet_response", "whatsapp_response_delivery", "single_callback_persistence"],
+      "forbiddenNodes": ["IF · WhatsApp check or assistant", "Supabase · Check WhatsApp replies", "Supabase · Save PE08 assistant response", "Supabase · Save PE08 user message"]
+    },
+    {
+      "code": "PE10",
+      "workflowId": "117KXgEKcwrh1yrU",
+      "trigger": "PE10 Receipt Webhook",
+      "mode": "contract-only-no-external-effects",
+      "expected": ["outlook_sent_items_read", "recipient_matching", "callback"],
+      "blockedEffects": ["outlook_write", "supabase_write"]
+    },
+    {
+      "code": "PE13",
+      "workflowId": "E4KbXSocetH7fxO8",
+      "trigger": "PE13 Case Conversation Webhook",
+      "mode": "contract-only",
+      "expected": ["conversation_validation", "channel_normalization", "context_lookup", "llm_response", "single_callback_persistence"]
+    }
+  ],
+  "archivedWorkflowIds": [
+    "h6gmE5kijJd1zJWf",
+    "jsIYRfT1vBz61F2Q",
+    "PxNlO4bBGPnnVtKb",
+    "Czv7hQWpf5E0DHnF",
+    "PH4N5fTHgrRq24xe",
+    "RRkGtH461GIo7tB1"
+  ]
+}

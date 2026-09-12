@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { createAction, getOperationError } from "@/lib/actions";
@@ -10,15 +10,17 @@ import { isDemoId } from "@/components/dashboard/action-feedback";
 import { DelegationForm, type DelegationFormValues } from "@/components/dashboard/delegation-form";
 import { FollowUpForm, type FollowUpFormValues } from "@/components/dashboard/follow-up-form";
 import { ActionCenter } from "@/components/dashboard/action-center";
+import { MarkdownMessage } from "@/components/format-message";
 import { OperationDialog, OperationDialogContent, OperationDialogDescription, OperationDialogHeader, OperationDialogTitle } from "@/components/dashboard/operation-dialog";
 import { toast } from "sonner";
 import { formatDateTime, formatRelativeTime } from "@/lib/utils";
-import { findCaseConversation, loadConversationMessages, type ConversationMessage } from "@/lib/conversations";
+import { findCaseConversation, getMessageText, loadConversationMessages, type ConversationMessage } from "@/lib/conversations";
+import { useRealtimeTable } from "@/lib/supabase/realtime";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CaseStatusBadge, PriorityBadge } from "@/components/cases/status-badge";
-import { ArrowLeft, Bot, CalendarClock, Check, ChevronRight, CircleCheck, FileText, Mail, MoreHorizontal, Send, ShieldCheck, Sparkles, UserRound } from "lucide-react";
+import { ArrowLeft, Bot, CalendarClock, Check, ChevronRight, CircleCheck, FileText, Mail, MessageSquare, MoreHorizontal, Send, ShieldCheck, Sparkles, UserRound } from "lucide-react";
 
 export default function CaseDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -28,9 +30,31 @@ export default function CaseDetailPage() {
   const [messageInput, setMessageInput] = useState("");
   const [sendingMessage, setSendingMessage] = useState(false);
   const [messageNotice, setMessageNotice] = useState<string | null>(null);
+  const [conversationStatus, setConversationStatus] = useState<"active" | "paused" | "closed">("active");
   const [dialog, setDialog] = useState<"delegation" | "follow-up" | null>(null);
   const [actionCenterOpen, setActionCenterOpen] = useState(false);
   const [processing, setProcessing] = useState(false);
+  const refreshConversation = useCallback(async () => {
+    if (!conversationId) return;
+    try {
+      setMessages(await loadConversationMessages(conversationId));
+      const { data: conversation } = await (createClient() as any).from("conversations").select("status").eq("id", conversationId).maybeSingle();
+      if (conversation?.status === "active" 
+        || conversation?.status === "paused" 
+        || conversation?.status === "closed") setConversationStatus(conversation.status);
+    } catch { setMessageNotice("No se pudo actualizar la conversación del caso."); }
+  }, [conversationId]);
+  useRealtimeTable("messages", refreshConversation, conversationId ? { column: "conversation_id", value: conversationId } : undefined);
+  async function updateConversation(operation: "resume" | "close") {
+    if (!conversationId) return;
+    const { error } = await createClient().functions.invoke("conversation-control", 
+      { body: { operation, conversation_id: conversationId } });
+    if (error) { setMessageNotice("No se pudo actualizar la conversación."); return; }
+    setConversationStatus(operation === "close" ? "closed" : "active");
+    setMessageNotice(operation === "close" ? "Caso finalizado." : "Conversación reanudada.");
+    await refreshConversation();
+    if (operation === "close") setItem((current) => ({ ...current, status: "closed", updated_at: new Date().toISOString() }));
+  }
   async function resolveCase() {
     if (!id || processing) return;
     setProcessing(true);
@@ -118,10 +142,22 @@ export default function CaseDetailPage() {
         const conversation = await findCaseConversation(id);
         if (!conversation?.id) return;
         setConversationId(conversation.id);
+        const { data: conversationState } = await (createClient() as any).from("conversations").select("status").eq("id", conversation.id).maybeSingle();
+        setConversationStatus(conversationState?.status === "paused" 
+          || conversationState?.status === "closed" ? conversationState.status : "active");
         setMessages(await loadConversationMessages(conversation.id));
       } catch { setMessageNotice("No se pudo cargar la conversación del caso."); }
     })();
   }, [id]);
+  async function waitForCaseResponse(id: string) {
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      const stored = await loadConversationMessages(id);
+      setMessages(stored);
+      if (stored.some((message) => message.sender_type === "ai" && message.content)) return true;
+    }
+    return false;
+  }
   async function sendCaseMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const content = messageInput.trim();
@@ -131,8 +167,13 @@ export default function CaseDetailPage() {
       const { data, error } = await createClient().functions.invoke("case-messages", { body: { case_id: id, conversation_id: conversationId, content } });
       if (error) throw error;
       if (data?.conversation_id) setConversationId(data.conversation_id);
-      if (data?.conversation_id) setMessages(await loadConversationMessages(data.conversation_id));
-      setMessageNotice(data?.status === "failed" ? "El mensaje se guardó, pero n8n no pudo procesarlo." : "Mensaje enviado a procesamiento.");
+      if (data?.conversation_id && data?.status === "queued") {
+        const received = await waitForCaseResponse(data.conversation_id);
+        setMessageNotice(received ? "Respuesta recibida." : "El mensaje fue aceptado, pero la respuesta está tardando más de lo esperado.");
+      } else if (data?.conversation_id) {
+        setMessages(await loadConversationMessages(data.conversation_id));
+      }
+      if (data?.status === "failed") setMessageNotice("El mensaje se guardó, pero n8n no pudo procesarlo.");
     } catch { setMessageNotice("No se pudo enviar el mensaje. Inténtalo de nuevo."); }
     finally { setSendingMessage(false); }
   }
@@ -192,7 +233,7 @@ export default function CaseDetailPage() {
         <h1 className="text-3xl font-semibold tracking-[-.04em] max-w-3xl">{item.title}</h1>
         <p className="text-muted-foreground mt-2 max-w-2xl">{item.description}</p>
       </div>
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         <Button variant="outline" onClick={() => setActionCenterOpen(true)} disabled={processing}>
           <MoreHorizontal />Más acciones
         </Button>
@@ -293,12 +334,28 @@ export default function CaseDetailPage() {
               {messages.length === 0 && <p className="text-xs text-muted-foreground">Aún no hay mensajes en esta conversación.</p>}
               {messages.map((message) => <div key={message.id} className={`flex gap-3 ${message.sender_type === "human" ? "justify-end" : ""}`}>
                 <div className={`rounded-lg p-3 max-w-[80%] ${message.sender_type === "human" ? "bg-primary text-primary-foreground" : "bg-muted/50"}`}>
-                  <p className="text-xs leading-relaxed">{message.content || ""}</p>
+                  <div className="text-xs leading-relaxed"><MarkdownMessage content={getMessageText(message)} /></div>
                   <p className="text-[10px] opacity-60 mt-2">{message.sender_type === "ai" ? "Agente IA" : message.sender_type === "system" ? "Sistema" : "Usuario"} · {formatDateTime(message.created_at)}</p>
                 </div>
                 {message.sender_type !== "human" && <div className="h-7 w-7 rounded-full bg-primary text-primary-foreground flex items-center justify-center shrink-0"><Bot className="h-3.5 w-3.5" /></div>}
               </div>)}
             </div>
+            {conversationStatus === "closed" && <div className="mt-6 rounded-lg border border-border bg-muted/40 p-4">
+              <p className="text-sm font-semibold">El chat se finalizó</p>
+              <p className="mt-1 text-xs text-muted-foreground">Envía un nuevo mensaje para reactivarlo.</p>
+            </div>}
+            {conversationStatus === "paused" && <div className="mt-6 rounded-lg border border-warning/40 bg-warning/10 p-4">
+              <p className="text-sm font-semibold">Conversación pausada por inactividad</p>
+              <p className="mt-1 text-xs text-muted-foreground">No hubo actividad durante el tiempo establecido. Puedes reanudarla o finalizar el caso.</p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Button size="sm" variant="outline" onClick={() => void updateConversation("resume")}>
+                  <MessageSquare />Reanudar conversación
+                </Button>
+                <Button size="sm" variant="destructive" onClick={() => void updateConversation("close")}>
+                  <CircleCheck />Finalizar caso
+                </Button>
+              </div>
+            </div>}
             <form className="flex gap-2 mt-6" onSubmit={sendCaseMessage}>
               <input aria-label="Escribe un mensaje" value={messageInput} onChange={(event) => setMessageInput(event.target.value)} disabled={sendingMessage} className="h-9 flex-1 rounded-md border bg-background px-3 text-xs outline-none focus:ring-2 focus:ring-ring" placeholder="Añadir una nota al caso..." />
               <Button type="submit" size="icon" aria-label="Enviar nota" disabled={sendingMessage || !messageInput.trim()}><Send /></Button>

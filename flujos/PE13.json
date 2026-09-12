@@ -19,7 +19,7 @@
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const input = $input.first().json;\nif (!input.workflow_execution_id || input.workflow_code !== 'PE13' || !input.case_id || !input.conversation_id || !input.source_message_id) {\n  throw new Error('INVALID_CASE_CONVERSATION_COMMAND');\n}\nreturn [{ json: input }];"
+        "jsCode": "const input = $input.first().json;\nif (!input.workflow_execution_id || input.workflow_code !== 'PE13' || !input.case_id || !input.conversation_id || !input.request_id) {\n  throw new Error('INVALID_CASE_CONVERSATION_COMMAND');\n}\nreturn [{ json: input }];"
       },
       "id": "01130000-0000-4000-8000-000000000002",
       "name": "Validate PE13 command",
@@ -42,7 +42,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ workflow_execution_id: $json.workflow_execution_id, workflow_code: 'PE13', organization_id: $json.organization_id, case_id: $json.case_id, conversation_id: $json.conversation_id, source_message_id: $json.source_message_id, status: 'success', idempotency_key: 'case-conversation:' + $json.source_message_id, output_data: { response: $json.input_data?.response || '', action: $json.input_data?.action || null }, error_data: {} }) }}",
+        "jsonBody": "={{ JSON.stringify({ workflow_execution_id: $json.workflow_execution_id, workflow_code: 'PE13', organization_id: $json.organization_id, case_id: $json.case_id, conversation_id: $json.conversation_id, request_id: $json.request_id, status: 'success', idempotency_key: 'case-conversation:' + $json.request_id, output_data: { response: $json.input_data?.response || '', content_json: $json.input_data?.content_json || {}, action: $json.input_data?.action || null }, error_data: {} }) }}",
         "options": {}
       },
       "id": "01130000-0000-4000-8000-000000000003",

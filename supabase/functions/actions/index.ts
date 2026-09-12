@@ -73,8 +73,8 @@ Deno.serve(async (req: Request) => {
     if (!parsed.success) return Response.json({ error: "Los datos de la acción no son válidos." }, { status: 422, headers: corsHeaders });
 
     const actionType = parsed.data.action_type;
-    if (actionType === "schedule_follow_up" && !body.input_data?.follow_up_id) {
-      return Response.json({ error: "follow_up_id es obligatorio para schedule_follow_up" }, { status: 422, headers: corsHeaders });
+    if (actionType === "schedule_follow_up" && !body.input_data?.follow_up_id && !body.input_data?.scheduled_for) {
+      return Response.json({ error: "scheduled_for es obligatorio para crear un seguimiento" }, { status: 422, headers: corsHeaders });
     }
     const decisionWorkflowCode = targetWorkflowByAction[actionType] || (actionType === "schedule_follow_up" ? "PE06" : "PE02");
     if (privilegedActions.has(actionType)) {
@@ -174,13 +174,35 @@ Deno.serve(async (req: Request) => {
     }
 
     let domainOutput: Record<string, unknown> | null = null;
-    if (actionType === "schedule_follow_up" && body.input_data?.follow_up_id) {
-      const { error } = await admin.from("follow_ups").update({
-        last_attempt_at: new Date().toISOString(),
-        metadata: { workflow_execution_id: executionId, decision: authority },
-      }).eq("id", body.input_data.follow_up_id).eq("organization_id", profile.organization_id);
-      if (error) throw error;
-      domainOutput = { ...authority, state: "follow_up_observed" };
+    if (actionType === "schedule_follow_up") {
+      const followUpId = typeof body.input_data?.follow_up_id === "string" ? body.input_data.follow_up_id : null;
+      const scheduledFor = typeof body.input_data?.scheduled_for === "string" ? body.input_data.scheduled_for : null;
+      const reason = typeof body.input_data?.reason === "string" ? body.input_data.reason : null;
+      const executeNow = body.input_data?.execute_now === true;
+      if (followUpId) {
+        const update = {
+          ...(scheduledFor ? { scheduled_for: scheduledFor, status: "pending" } : {}),
+          ...(reason ? { reason } : {}),
+          ...(executeNow ? { last_attempt_at: new Date().toISOString() } : {}),
+          metadata: { workflow_execution_id: executionId, decision: authority },
+        };
+        const { error } = await admin.from("follow_ups").update(update)
+          .eq("id", followUpId).eq("organization_id", profile.organization_id);
+        if (error) throw error;
+        domainOutput = { ...authority, state: executeNow ? "follow_up_executed" : "follow_up_rescheduled" };
+      } else {
+        if (!body.case_id || !scheduledFor) throw new Error("FOLLOW_UP_DATA_INCOMPLETE");
+        const { data: followUp, error } = await admin.from("follow_ups").insert({
+          organization_id: profile.organization_id,
+          case_id: body.case_id,
+          scheduled_for: scheduledFor,
+          reason,
+          status: "pending",
+          metadata: { workflow_execution_id: executionId, decision: authority },
+        }).select("id,scheduled_for,status").single();
+        if (error) throw error;
+        domainOutput = { ...authority, state: "follow_up_scheduled", follow_up: followUp };
+      }
     } else if (actionType === "delegate_case" && body.case_id) {
       const { error } = await admin.from("cases").update({
         assigned_to: body.input_data?.assigned_to || null,
@@ -194,6 +216,14 @@ Deno.serve(async (req: Request) => {
       const status = statusByAction[actionType];
       const { error } = await admin.from("cases").update({ status }).eq("id", body.case_id).eq("organization_id", profile.organization_id);
       if (error) throw error;
+      if (actionType === "resolve_case") {
+        const { error: followUpError } = await admin.from("follow_ups").update({
+          status: "completed",
+          completed_at: new Date().toISOString(),
+          metadata: { workflow_execution_id: executionId, decision: authority },
+        }).eq("case_id", body.case_id).eq("organization_id", profile.organization_id).eq("status", "pending");
+        if (followUpError) throw followUpError;
+      }
       domainOutput = { ...authority, state: status };
     }
 
