@@ -85,3 +85,4 @@ superpowers/
 docs/
 flujos/PULSO-LIVE-analisis-y-migracion-supabase.md
 scripts/verify-n8n-sam-workflows.mjs
+.vercel

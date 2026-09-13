@@ -3,14 +3,14 @@ declare const Deno: {
   serve(handler: (request: Request) => Response | Promise<Response>): void;
 };
 
-import { corsHeaders } from "../_shared/cors.ts";
+import { cors } from "../_shared/cors.ts";
 import { getAuthedClient } from "../_shared/auth.ts";
 import { adminClient, isUuid } from "../_shared/integration.ts";
 
 type Operation = "pause_if_inactive" | "resume" | "close";
 
 Deno.serve(async (req: Request) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+  if (req.method === "OPTIONS") return new Response("ok", { headers: cors(req) });
 
   try {
     const body = await req.json();
@@ -23,11 +23,11 @@ Deno.serve(async (req: Request) => {
     const expectedGeneration = Number.isFinite(Number(body.expected_generation)) ? Number(body.expected_generation) : null;
     const expectedLastActivityAt = typeof body.expected_last_activity_at === "string" ? body.expected_last_activity_at : null;
     if (!isUuid(conversationId) || !["pause_if_inactive", "resume", "close"].includes(operation)) {
-      return Response.json({ error: "conversation_id y operation son obligatorios" }, { status: 422, headers: corsHeaders });
+      return Response.json({ error: "conversation_id y operation son obligatorios" }, { status: 422, headers: cors(req) });
     }
 
     const organizationId = isN8nRequest ? body.organization_id : (await client.from("users").select("organization_id").eq("id", user.id).single()).data?.organization_id;
-    if (!isUuid(organizationId)) return Response.json({ error: "Organización no válida" }, { status: 403, headers: corsHeaders });
+    if (!isUuid(organizationId)) return Response.json({ error: "Organización no válida" }, { status: 403, headers: cors(req) });
 
     const admin = adminClient();
     const { data: conversation, error: conversationError } = await admin
@@ -37,22 +37,22 @@ Deno.serve(async (req: Request) => {
       .eq("organization_id", organizationId)
       .maybeSingle();
     if (conversationError) throw conversationError;
-    if (!conversation) return Response.json({ error: "Conversación no encontrada" }, { status: 404, headers: corsHeaders });
+    if (!conversation) return Response.json({ error: "Conversación no encontrada" }, { status: 404, headers: cors(req) });
 
     const now = new Date();
     if (operation === "pause_if_inactive") {
       if (!timerId || expectedGeneration === null || !expectedLastActivityAt) {
-        return Response.json({ conversation, paused: false, ignored: true, reason: "TIMER_METADATA_REQUIRED" }, { headers: corsHeaders });
+        return Response.json({ conversation, paused: false, ignored: true, reason: "TIMER_METADATA_REQUIRED" }, { headers: cors(req) });
       }
       if (conversation.status === "closed" || conversation.status === "paused") {
-        return Response.json({ conversation, paused: false, ignored: true, reason: conversation.status === "paused" ? "ALREADY_PAUSED" : "CLOSED" }, { headers: corsHeaders });
+        return Response.json({ conversation, paused: false, ignored: true, reason: conversation.status === "paused" ? "ALREADY_PAUSED" : "CLOSED" }, { headers: cors(req) });
       }
       const deadlinePassed = !conversation.inactivity_deadline_at || new Date(conversation.inactivity_deadline_at).getTime() <= now.getTime();
       const timerMatches = !timerId || conversation.active_inactivity_timer_id === timerId;
       const generationMatches = expectedGeneration === null || Number(conversation.inactivity_generation || 0) === expectedGeneration;
       const activityMatches = !expectedLastActivityAt || conversation.last_activity_at === expectedLastActivityAt;
       if (!deadlinePassed || !timerMatches || !generationMatches || !activityMatches) {
-        return Response.json({ conversation, paused: false, ignored: true, reason: "STALE_TIMER" }, { headers: corsHeaders });
+        return Response.json({ conversation, paused: false, ignored: true, reason: "STALE_TIMER" }, { headers: cors(req) });
       }
       const { data, error } = await admin.from("conversations").update({
         status: "paused",
@@ -60,7 +60,7 @@ Deno.serve(async (req: Request) => {
         inactivity_notice_sent_at: now.toISOString(),
       }).eq("id", conversationId).eq("organization_id", organizationId).eq("status", "active").eq("active_inactivity_timer_id", timerId || conversation.active_inactivity_timer_id).eq("inactivity_generation", expectedGeneration ?? conversation.inactivity_generation).select("id,status,paused_at,inactivity_notice_sent_at").maybeSingle();
       if (error) throw error;
-      if (!data) return Response.json({ conversation, paused: false, ignored: true, reason: "STALE_TIMER" }, { headers: corsHeaders });
+      if (!data) return Response.json({ conversation, paused: false, ignored: true, reason: "STALE_TIMER" }, { headers: cors(req) });
       await admin.from("workflow_executions").update({
         status: "cancelled",
         finished_at: now.toISOString(),
@@ -74,13 +74,13 @@ Deno.serve(async (req: Request) => {
         content_json: { type: "inactivity_notice", paused_at: now.toISOString(), timer_id: timerId },
         metadata: { source: "conversation-control", workflow_codes: ["PE08", "PE13"], timer_id: timerId },
       });
-      return Response.json({ conversation: data, paused: true }, { headers: corsHeaders });
+      return Response.json({ conversation: data, paused: true }, { headers: cors(req) });
     }
 
     if (operation === "close") {
       const expectedPausedAt = typeof body.expected_paused_at === "string" ? body.expected_paused_at : null;
       if (expectedPausedAt && conversation.paused_at !== expectedPausedAt) {
-        return Response.json({ conversation, closed: false, reason: "CONVERSATION_REACTIVATED" }, { headers: corsHeaders });
+        return Response.json({ conversation, closed: false, reason: "CONVERSATION_REACTIVATED" }, { headers: cors(req) });
       }
       await admin.from("workflow_executions").update({
         status: "cancelled",
@@ -97,14 +97,14 @@ Deno.serve(async (req: Request) => {
         conversation: data || { ...conversation, status: "closed" }, 
         case_closed: Boolean(conversation.case_id), 
         closed: true 
-      }, { headers: corsHeaders });
+      }, { headers: cors(req) });
     }
 
     const { data, error } = await admin.from("conversations").update({ status: "active", paused_at: null }).eq("id", conversationId).eq("organization_id", organizationId).neq("status", "closed").select("id,status,paused_at").single();
     if (error) throw error;
-    return Response.json({ conversation: data }, { headers: corsHeaders });
+    return Response.json({ conversation: data }, { headers: cors(req) });
   } catch (error) {
     const status = error instanceof Error && error.message === "UNAUTHORIZED" ? 401 : 500;
-    return Response.json({ error: status === 401 ? "No autorizado" : "No se pudo actualizar la conversación" }, { status, headers: corsHeaders });
+    return Response.json({ error: status === 401 ? "No autorizado" : "No se pudo actualizar la conversación" }, { status, headers: cors(req) });
   }
 });

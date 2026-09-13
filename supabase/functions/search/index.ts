@@ -9,11 +9,11 @@ declare const Deno: {
 
 // @ts-expect-error Deno resolves URL imports at Edge Function runtime.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { corsHeaders } from "../_shared/cors.ts";
+import { cors } from "../_shared/cors.ts";
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
+    return new Response("ok", { headers: cors(req) });
   }
 
   try {
@@ -28,7 +28,7 @@ Deno.serve(async (req: Request) => {
     if (!user) {
       return Response.json(
         { error: "No autorizado" },
-        { status: 401, headers: corsHeaders }
+        { status: 401, headers: cors(req) }
       );
     }
 
@@ -38,7 +38,7 @@ Deno.serve(async (req: Request) => {
     if (term.length < 2 || term.length > 120) {
       return Response.json(
         { data: [] },
-        { headers: corsHeaders }
+        { headers: cors(req) }
       );
     }
 
@@ -59,12 +59,12 @@ Deno.serve(async (req: Request) => {
           actions: actions.data || [],
         },
       },
-      { headers: corsHeaders }
+      { headers: cors(req) }
     );
   } catch {
     return Response.json(
       { error: "No se pudo completar la búsqueda" },
-      { status: 500, headers: corsHeaders }
+      { status: 500, headers: cors(req) }
     );
   }
 });

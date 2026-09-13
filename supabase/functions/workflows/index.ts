@@ -1,6 +1,6 @@
 declare const Deno: { serve(handler: (request: Request) => Response | Promise<Response>): void };
 
-import { corsHeaders } from "../_shared/cors.ts";
+import { cors } from "../_shared/cors.ts";
 import { getAuthedClient } from "../_shared/auth.ts";
 import { adminClient, createExecution } from "../_shared/integration.ts";
 import { getWorkflowExecution, listWorkflows, triggerWorkflow } from "../_shared/n8n/client.ts";
@@ -62,13 +62,13 @@ async function syncRuntimeStatus(organizationId: string, definitions: Array<Reco
 }
 
 Deno.serve(async (req: Request) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+  if (req.method === "OPTIONS") return new Response("ok", { headers: cors(req) });
   try {
     const { client, user } = await getAuthedClient(req);
     const body = await req.json().catch(() => ({}));
     const profile = await client.from("users").select("organization_id,role").eq("id", user.id).single();
    
-    if (!profile.data) return Response.json({ error: "Usuario sin organización" }, { status: 403, headers: corsHeaders });
+    if (!profile.data) return Response.json({ error: "Usuario sin organización" }, { status: 403, headers: cors(req) });
    
     if (body.operation === "sync_status") {
       const { data: definitions, error } = await client
@@ -77,7 +77,7 @@ Deno.serve(async (req: Request) => {
         .order("code");
       if (error) throw error;
       await syncRuntimeStatus(profile.data.organization_id, (definitions || []) as Array<Record<string, unknown>>);
-      return Response.json({ data: { synced: definitions?.length || 0 } }, { headers: corsHeaders });
+      return Response.json({ data: { synced: definitions?.length || 0 } }, { headers: cors(req) });
     }
 
     if (req.method === "GET" || body.operation === "list") {
@@ -119,11 +119,11 @@ Deno.serve(async (req: Request) => {
             events: 0,
           },
         })),
-      }, { headers: corsHeaders });
+      }, { headers: cors(req) });
     }
-    if (body.execution_id) return Response.json({ data: await getWorkflowExecution(body.execution_id) }, { headers: corsHeaders });
+    if (body.execution_id) return Response.json({ data: await getWorkflowExecution(body.execution_id) }, { headers: cors(req) });
     if (!body.workflow_code && !body.action_id) return Response.json({ error: "workflow_code o action_id requerido" }, 
-      { status: 422, headers: corsHeaders });
+      { status: 422, headers: cors(req) });
     
     const payload = { action_id: body.action_id, organization_id: profile.data.organization_id,
       case_id: body.case_id || null, action_type: body.action_type || "execute_workflow", workflow_code: body.workflow_code, input_data: body.input_data || {} };
@@ -155,7 +155,10 @@ Deno.serve(async (req: Request) => {
       });
       if (error) throw error;
       await admin.from("workflow_executions").update({ status: "success", output_data: eventData, finished_at: new Date().toISOString() }).eq("id", executionId);
-      return Response.json({ data: { success: true, workflow_execution_id: executionId, output_data: eventData } }, { status: 202, headers: corsHeaders });
+      return Response.json({ data: { success: true, 
+        workflow_execution_id: executionId, 
+        output_data: eventData } }, 
+        { status: 202, headers: cors(req) });
     }
 
     const result = await triggerWorkflow(payload);
@@ -164,11 +167,11 @@ Deno.serve(async (req: Request) => {
       await client.from("actions").update({ status: "queued", n8n_execution_id: result.execution_id || null }).eq("id", body.action_id);
     }
     
-    return Response.json({ data: result }, { status: 202, headers: corsHeaders });
+    return Response.json({ data: result }, { status: 202, headers: cors(req) });
   } 
   catch (error) { 
     const message = error instanceof Error && error.message === "UNAUTHORIZED" ? "No autorizado" : error instanceof Error && error.message.includes("N8N") ? 
     "La integración con n8n no está disponible" : "No se pudo procesar el workflow"; 
     return Response.json({ error: message }, 
-      { status: message === "No autorizado" ? 401 : 500, headers: corsHeaders }); }
+      { status: message === "No autorizado" ? 401 : 500, headers: cors(req) }); }
 });

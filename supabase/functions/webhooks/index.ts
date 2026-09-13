@@ -5,7 +5,7 @@ declare const Deno: {
 
 // @ts-expect-error Deno resolves URL imports at Edge Function runtime.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { corsHeaders } from "../_shared/cors.ts";
+import { cors } from "../_shared/cors.ts";
 import {
   createCommand,
   createExecution,
@@ -21,11 +21,12 @@ import { triggerWorkflow } from "../_shared/n8n/client.ts";
 const terminalStatuses = ["success", "failed", "cancelled"];
 
 Deno.serve(async (req: Request) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+  if (req.method === "OPTIONS") return new Response("ok", { headers: cors(req) });
 
   const expectedSecret = Deno.env.get("N8N_WEBHOOK_SECRET");
   if (!expectedSecret || req.headers.get("x-n8n-webhook-secret") !== expectedSecret) {
-    return Response.json({ error: "Webhook no autorizado" }, { status: 401, headers: corsHeaders });
+    return Response.json({ error: "Webhook no autorizado" }, 
+      { status: 401, headers: cors(req) });
   }
 
   try {
@@ -37,7 +38,7 @@ Deno.serve(async (req: Request) => {
     if (!body.workflow_execution_id || !body.organization_id || !body.workflow_code) {
       return Response.json(
         { error: "workflow_execution_id, organization_id y workflow_code son obligatorios" },
-        { status: 422, headers: corsHeaders },
+        { status: 422, headers: cors(req) },
       );
     }
 
@@ -57,7 +58,7 @@ Deno.serve(async (req: Request) => {
     if (!execution || execution.workflow_code !== body.workflow_code || executionOrganizationId !== body.organization_id) {
       return Response.json({ error: "Ejecución o workflow no encontrado" }, { 
         status: 404, 
-        headers: corsHeaders 
+        headers: cors(req) 
       });
     }
 
@@ -69,7 +70,8 @@ Deno.serve(async (req: Request) => {
       .eq("idempotency_key", resultKey)
       .maybeSingle();
 
-    if (existingEvent) return Response.json({ success: true, duplicate: true }, { headers: corsHeaders });
+    if (existingEvent) return Response.json({ success: true, duplicate: true }, 
+      { headers: cors(req) });
 
     if (status === "success" && execution.decision_id) {
       const { data: decision } = await admin
@@ -79,7 +81,8 @@ Deno.serve(async (req: Request) => {
         .eq("organization_id", body.organization_id)
         .maybeSingle();
       if (!decision || !decision.authorized || decision.requires_approval) {
-        return Response.json({ error: "El resultado no corresponde a un comando autorizado" }, { status: 409, headers: corsHeaders });
+        return Response.json({ error: "El resultado no corresponde a un comando autorizado" }, 
+          { status: 409, headers: cors(req) });
       }
     }
 
@@ -448,7 +451,7 @@ Deno.serve(async (req: Request) => {
       workflow_execution_id: execution.id,
       result: contractResult,
       dispatched,
-    }, { headers: corsHeaders });
+    }, { headers: cors(req) });
   } catch (error) {
     const errorDetails = error instanceof Error
       ? { name: error.name, message: error.message, stack: error.stack }
@@ -464,7 +467,7 @@ Deno.serve(async (req: Request) => {
         error: "No se pudo procesar el callback de n8n",
         detail: detail || "UNKNOWN_CALLBACK_ERROR",
       },
-      { status: 500, headers: corsHeaders },
+      { status: 500, headers: cors(req) },
     );
   }
 });

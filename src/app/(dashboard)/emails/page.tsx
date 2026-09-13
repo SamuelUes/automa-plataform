@@ -22,6 +22,41 @@ import { Archive, ArrowUpRight, BriefcaseBusiness, ChevronLeft, FileCheck2, Inbo
 
 const demoMode = process.env.NEXT_PUBLIC_DEMO_MODE === "true";
 
+function formatEmailBody(body: string) {
+  return body
+    .replace(/&nbsp;|&#160;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'");
+
+  // if (!bodyHtml || body.includes("\n")) return decodeEntities(body);
+
+  // const document = new DOMParser().parseFromString(bodyHtml, "text/html");
+  // const blockTags = new Set(["ADDRESS", "ARTICLE", "DIV", "LI", "P", "SECTION", "TD", "TR"]);
+  // const lines: string[] = [];
+
+  // function visit(node: Node) {
+  //   if (node.nodeType === Node.TEXT_NODE) {
+  //     lines.push(node.textContent || "");
+  //     return;
+  //   }
+  //   if (!(node instanceof Element)) return;
+  //   if (node.tagName === "BR") lines.push("\n");
+  //   if (node.tagName === "LI") lines.push("\n- ");
+  //   for (const child of Array.from(node.childNodes)) visit(child);
+  //   if (blockTags.has(node.tagName)) lines.push("\n");
+  // }
+
+  // visit(document.body);
+  // return lines.join("")
+  //   .replace(/[ \t]+/g, " ")
+  //   .replace(/\n[ \t]+/g, "\n")
+  //   .replace(/\n{3,}/g, "\n\n")
+  //   .trim();
+}
+
 export default function EmailsPage() {
   const router = useRouter();
   const [emails, setEmails] = useState<DemoEmail[]>(demoMode ? demoEmails : []);
@@ -52,12 +87,13 @@ export default function EmailsPage() {
   }
   useEffect(() => {
     (async () => {
-      const { data } = await (createClient() as any).from("emails").select("id,subject,body_text,direction,sender,received_at,case_id,metadata").order("created_at", { ascending: false }).limit(50);
+      const { data } = await (createClient() as any).from("emails").select("id,subject,body_text,body_html,direction,sender,received_at,case_id,metadata").order("created_at", { ascending: false }).limit(50);
       if (!data?.length) return;
       setEmails(data.map((email: { 
         id: string; 
         subject: string | null; 
         body_text: string | null; 
+        body_html: string | null; 
         direction: DemoEmail["direction"]; 
         sender: unknown; 
         metadata: unknown; 
@@ -80,6 +116,7 @@ export default function EmailsPage() {
           direction: email.direction,
           requiresApproval: Boolean(metadata.requires_approval),
           body: email.body_text || "",
+          bodyHtml: email.body_html || undefined,
         } as DemoEmail;
       }));
     })();
@@ -209,7 +246,18 @@ export default function EmailsPage() {
                               </div>
                               <span className="ml-auto text-[11px] text-muted-foreground">Para tu cuenta</span>
                             </div>
-                            <div className="py-7 text-sm leading-7 whitespace-pre-line">{selected.body}</div>
+                            <div className="max-w-3xl py-7">
+                              {selected.bodyHtml ? (
+                                <iframe
+                                  title={`Contenido de ${selected.subject}`}
+                                  srcDoc={selected.bodyHtml}
+                                  sandbox=""
+                                  className="min-h-[520px] w-full rounded-md border bg-background"
+                                />
+                              ) : (
+                                <div className="text-sm leading-7 whitespace-pre-wrap break-words">{formatEmailBody(selected.body)}</div>
+                              )}
+                            </div>
                             <div className="flex flex-wrap gap-2 border-t pt-5">
                               <Button className="w-full sm:w-fit" onClick={() => { setComposeMode("reply"); setComposeOpen(true); }}><Reply />
                                 Responder

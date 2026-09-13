@@ -1,14 +1,18 @@
 declare const Deno: { env: { get(name: string): string | undefined }; serve(handler: (request: Request) => Response | Promise<Response>): void };
 
-import { corsHeaders } from "../_shared/cors.ts";
+import { cors } from "../_shared/cors.ts";
 import { adminClient, createExecution, recordAssistantProgress } from "../_shared/integration.ts";
 import { triggerWorkflow } from "../_shared/n8n/client.ts";
 
 Deno.serve(async (req: Request) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+  if (req.method === "OPTIONS") return new Response("ok", { headers: cors(req) });
   const secret = Deno.env.get("N8N_INGRESS_SECRET");
-  if (!secret || req.headers.get("x-prologistica-secret") !== secret) return Response.json({ error: "No autorizado" }, { status: 401, headers: corsHeaders });
-  if (req.method !== "POST") return Response.json({ error: "POST requerido" }, { status: 405, headers: corsHeaders });
+  if (!secret || req.headers.get("x-prologistica-secret") !== secret) 
+    return Response.json({ error: "No autorizado" }, 
+      { status: 401, headers: cors(req) });
+  if (req.method !== "POST") 
+    return Response.json({ error: "POST requerido" }, 
+      { status: 405, headers: cors(req) });
   try {
     const body = await req.json();
     if (body.operation === "dispatch_orchestration") {
@@ -20,7 +24,8 @@ Deno.serve(async (req: Request) => {
          !body.conversation_id || 
          !parentRequestId || 
          !calls.length) {
-        return Response.json({ error: "Despacho de orquestación incompleto" }, { status: 422, headers: corsHeaders });
+        return Response.json({ error: "Despacho de orquestación incompleto" }, 
+          { status: 422, headers: cors(req) });
       }
       const admin = adminClient();
       if (body.input_data?.intent || body.input_data?.target_capability || body.input_data?.workflow_alias) {
@@ -105,12 +110,18 @@ Deno.serve(async (req: Request) => {
           });
         }
       }
-      if (!dispatched.length && errors.length) return Response.json({ success: false, status: "failed", dispatched, errors }, { status: 502, headers: corsHeaders });
-      if (!dispatched.length) return Response.json({ error: "No hay destinos operacionales autorizados" }, { status: 422, headers: corsHeaders });
-      return Response.json({ success: errors.length === 0, status: errors.length ? "partial" : "dispatched", dispatched, errors }, { headers: corsHeaders });
+      if (!dispatched.length && errors.length) 
+        return Response.json({ success: false, status: "failed", dispatched, errors }, 
+      { status: 502, headers: cors(req) });
+      if (!dispatched.length) 
+        return Response.json({ error: "No hay destinos operacionales autorizados" }, 
+      { status: 422, headers: cors(req) });
+      return Response.json({ success: errors.length === 0, status: errors.length ? "partial" : "dispatched", dispatched, errors }, 
+      { headers: cors(req) });
     }
-    if (!body.workflow_code || !body.workflow_execution_id || !body.organization_id) return Response.json({ error: "Contrato incompleto" }, 
-      { status: 422, headers: corsHeaders });
+    if (!body.workflow_code || !body.workflow_execution_id || !body.organization_id) 
+      return Response.json({ error: "Contrato incompleto" }, 
+      { status: 422, headers: cors(req) });
       
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
     const callbackSecret = Deno.env.get("N8N_WEBHOOK_SECRET");
@@ -121,9 +132,9 @@ Deno.serve(async (req: Request) => {
       body: JSON.stringify(body) 
     });
     const result = await callback.json().catch(() => ({}));
-    return Response.json(result, { status: callback.ok ? 200 : callback.status, headers: corsHeaders });
+    return Response.json(result, { status: callback.ok ? 200 : callback.status, headers: cors(req) });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "No se pudo guardar el resultado" }, 
-      { status: 500, headers: corsHeaders });
+      { status: 500, headers: cors(req) });
   }
 });

@@ -41,9 +41,11 @@ export type Database = {
           email: string | null;
           avatar_url: string | null;
           whatsapp_phone: string | null;
+          auth_provider: string;
           role: UserRole;
           settings: Json;
           is_active: boolean;
+          department_id: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -54,18 +56,22 @@ export type Database = {
           email?: string | null;
           avatar_url?: string | null;
           whatsapp_phone?: string | null;
+          auth_provider?: string;
           role?: UserRole;
           settings?: Json;
           is_active?: boolean;
+          department_id?: string | null;
         };
         Update: {
           full_name?: string | null;
           email?: string | null;
           avatar_url?: string | null;
           whatsapp_phone?: string | null;
+          auth_provider?: string;
           role?: UserRole;
           settings?: Json;
           is_active?: boolean;
+          department_id?: string | null;
         };
       };
       departments: {

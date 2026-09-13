@@ -22,6 +22,22 @@ export default async function DashboardLayout({
         .maybeSingle()
     : { data: null };
 
+  const navBadges: { cases?: string; approvals?: string } = {};
+  if (user && profile?.organization_id && profile.is_active) {
+    const [activeCases, pendingApprovals] = await Promise.all([
+      (supabase as any)
+        .from("cases")
+        .select("id", { count: "exact", head: true })
+        .not("status", "in", '("resolved","closed","cancelled")'),
+      (supabase as any)
+        .from("approvals")
+        .select("id", { count: "exact", head: true })
+        .eq("status", "pending"),
+    ]);
+    if (activeCases.count) navBadges.cases = String(activeCases.count);
+    if (pendingApprovals.count) navBadges.approvals = String(pendingApprovals.count);
+  }
+
   if (!user || !profile?.organization_id || !profile.is_active) {
     return (
       <main className="min-h-screen bg-background flex items-center justify-center px-6">
@@ -57,6 +73,7 @@ export default async function DashboardLayout({
         role: profile.role || "agent",
         avatarUrl: profile.avatar_url,
       }}
+      navBadges={navBadges}
     >
       <RealtimeBridge />
       {children}

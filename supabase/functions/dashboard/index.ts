@@ -1,10 +1,10 @@
 declare const Deno: { serve(handler: (request: Request) => Response | Promise<Response>): void };
 
-import { corsHeaders } from "../_shared/cors.ts";
+import { cors } from "../_shared/cors.ts";
 import { getAuthedClient } from "../_shared/auth.ts";
 
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+  if (req.method === "OPTIONS") return new Response("ok", { headers: cors(req) });
   try {
     const { client } = await getAuthedClient(req);
     const [{ data: cases }, { data: approvals }, { data: followUps }, { data: workflows }] = await Promise.all([
@@ -13,6 +13,12 @@ Deno.serve(async (req) => {
       client.from("follow_ups").select("id,case_id,status,scheduled_for,reason").eq("status", "pending").order("scheduled_for", { ascending: true }).limit(10),
       client.from("workflow_definitions").select("id,code,name,is_active,updated_at").order("code").limit(12),
     ]);
-    return Response.json({ cases: cases || [], approvals: approvals || [], follow_ups: followUps || [], workflows: workflows || [] }, { headers: corsHeaders });
-  } catch (error) { const status = error instanceof Error && error.message === "UNAUTHORIZED" ? 401 : 500; return Response.json({ error: status === 401 ? "No autorizado" : "No se pudo cargar el dashboard" }, { status, headers: corsHeaders }); }
+    return Response.json({ cases: cases || 
+      [], approvals: approvals || 
+      [], follow_ups: followUps || 
+      [], workflows: workflows || [] }, 
+      { headers: cors(req) });
+  } catch (error) { const status = error instanceof Error && error.message === "UNAUTHORIZED" ? 401 : 500; 
+    return Response.json({ error: status === 401 ? "No autorizado" : "No se pudo cargar el dashboard" }, 
+      { status, headers: cors(req) }); }
 });

@@ -9,15 +9,17 @@ import { NotificationBell } from "@/components/layout/notification-bell";
 import { GlobalSearch } from "@/components/layout/global-search";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { CurrentUserProvider } from "@/components/providers/current-user-context";
+import { canAccessPath } from "@/lib/permissions";
 import { Bot, BriefcaseBusiness, ChevronRight, CircleHelp, Command, FileText, Inbox, LayoutDashboard, LogOut, Menu, Moon, PanelLeft, Settings, Sun, Users, Workflow, Zap } from "lucide-react";
 import { useTheme } from "next-themes";
 
 const mainNav = [
   { href: "/dashboard", label: "Inicio", icon: LayoutDashboard },
-  { href: "/cases", label: "Casos", icon: BriefcaseBusiness, badge: "8" },
+  { href: "/cases", label: "Casos", icon: BriefcaseBusiness },
   { href: "/emails", label: "Correos", icon: Inbox },
-  { href: "/approvals", label: "Aprobaciones", icon: FileText, badge: "3" },
+  { href: "/approvals", label: "Aprobaciones", icon: FileText },
 ];
 const operationsNav = [
   { href: "/delegations", label: "Delegaciones", icon: Users },
@@ -27,13 +29,18 @@ const operationsNav = [
 ];
 const systemNav = [{ href: "/activity", label: "Actividad", icon: PanelLeft }, { href: "/settings", label: "Configuración", icon: Settings }];
 
-function NavContent({ collapsed, onNavigate }: { collapsed: boolean; onNavigate?: () => void }) {
+function NavContent({ collapsed, onNavigate, badges, role }: { collapsed: boolean; onNavigate?: () => void; badges?: { cases?: string; approvals?: string }; role: string }) {
   const pathname = usePathname();
-  const navGroup = (items: typeof mainNav, title: string) => 
-  <div className="mb-6">
+  const navGroup = (items: typeof mainNav, title: string) => {
+    const visible = items.filter((item) => canAccessPath(role, item.href));
+    if (!visible.length) return null;
+
+  return <div className="mb-6">
     <p className={cn("px-3 mb-2 font-mono text-[10px] uppercase tracking-[.16em] text-muted-foreground/65", collapsed && "sr-only")}>{title} </p>
     
-    {items.map(({ href, label, icon: Icon, badge }) => { const active = pathname === href || pathname.startsWith(href + "/"); 
+    {visible.map(({ href, label, icon: Icon }) => {
+      const badge = badges && href === "/cases" ? badges.cases : badges && href === "/approvals" ? badges.approvals : undefined;
+      const active = pathname === href || pathname.startsWith(href + "/"); 
     
     return (
     
@@ -48,6 +55,7 @@ function NavContent({ collapsed, onNavigate }: { collapsed: boolean; onNavigate?
     );
   })}
   </div>;
+  };
 
   return <>
   <div className="flex items-center gap-3 h-12 mb-8 px-2">
@@ -75,10 +83,12 @@ function Sidebar({
   collapsed,
   setCollapsed,
   currentUser,
+  badges,
 }: {
   collapsed: boolean;
   setCollapsed: (value: boolean) => void;
   currentUser: CurrentUser;
+  badges?: { cases?: string; approvals?: string };
 }) {
   const router = useRouter();
   async function signOut() { 
@@ -89,11 +99,12 @@ function Sidebar({
     
   return (
   <aside className={cn("hidden lg:flex flex-col border-r bg-sidebar border-sidebar-border p-3 transition-[width] duration-200", collapsed ? "w-18" : "w-61")}>
-    <NavContent collapsed={collapsed} />
+    <NavContent collapsed={collapsed} badges={badges} role={currentUser.role} />
     <div className="mt-auto">
       <div className={cn("border-t border-sidebar-border pt-3", collapsed && "flex flex-col items-center")}>
         <button className={cn("w-full flex items-center gap-3 rounded-md px-2 py-2.5 text-left hover:bg-sidebar-accent transition-colors", collapsed && "justify-center")}>
           <Avatar className="h-8 w-8">
+            {currentUser.avatarUrl && <AvatarImage src={currentUser.avatarUrl} alt={currentUser.fullName} />}
             <AvatarFallback className="bg-[#d7e7e2] text-[#28584e] text-xs font-semibold">{getInitials(currentUser.fullName)}</AvatarFallback>
           </Avatar>
           {!collapsed && <div className="min-w-0"><div className="text-xs font-medium truncate">{currentUser.fullName}</div><div className="text-[11px] text-muted-foreground truncate">{currentUser.role}</div></div>}
@@ -117,9 +128,11 @@ function Sidebar({
 export function AppShell({
   children,
   currentUser,
+  navBadges,
 }: {
   children: React.ReactNode;
   currentUser: CurrentUser;
+  navBadges?: { cases?: string; approvals?: string };
 }) {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -129,12 +142,14 @@ export function AppShell({
   const { theme, setTheme } = useTheme();
   useEffect(() => setMounted(true), []);
   return (
+  <CurrentUserProvider value={currentUser}>
   <div className="min-h-screen flex min-w-0 bg-background">
     <div className="relative">
       <Sidebar
         collapsed={collapsed}
         setCollapsed={setCollapsed}
         currentUser={currentUser}
+        badges={navBadges}
       />
     </div>
 
@@ -162,6 +177,7 @@ export function AppShell({
               </Button>
               <div className="hidden h-7 w-px bg-border sm:ml-1 sm:block" />
               <Avatar className="h-8 w-8 sm:hidden">
+                {currentUser.avatarUrl && <AvatarImage src={currentUser.avatarUrl} alt={currentUser.fullName} />}
                 <AvatarFallback className="bg-[#d7e7e2] text-[#28584e] text-xs">{getInitials(currentUser.fullName)}</AvatarFallback>
               </Avatar>
             </div>
@@ -173,9 +189,10 @@ export function AppShell({
         </div>
         <SheetContent side="left" className="w-[min(17rem,calc(100vw-1rem))] bg-sidebar p-3">
           <SheetTitle className="sr-only">Navegación principal</SheetTitle>
-          <NavContent collapsed={false} onNavigate={() => setMobileOpen(false)} />
+          <NavContent collapsed={false} onNavigate={() => setMobileOpen(false)} badges={navBadges} role={currentUser.role} />
         </SheetContent>
       </Sheet>
     </div>
+  </CurrentUserProvider>
   );
 }

@@ -1,10 +1,10 @@
 declare const Deno: { serve(handler: (request: Request) => Response | Promise<Response>): void };
 
-import { corsHeaders } from "../_shared/cors.ts";
+import { cors } from "../_shared/cors.ts";
 import { getAuthedClient } from "../_shared/auth.ts";
 
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+  if (req.method === "OPTIONS") return new Response("ok", { headers: cors(req) });
   try {
     const { client } = await getAuthedClient(req);
     const url = new URL(req.url);
@@ -17,6 +17,9 @@ Deno.serve(async (req) => {
     if (search) query = query.ilike("title", `%${search}%`);
     const { data, error, count } = await query;
     if (error) throw error;
-    return Response.json({ data, count, limit, offset }, { headers: corsHeaders });
-  } catch (error) { const status = error instanceof Error && error.message === "UNAUTHORIZED" ? 401 : 500; return Response.json({ error: status === 401 ? "No autorizado" : "No se pudieron cargar los casos" }, { status, headers: corsHeaders }); }
+    
+    return Response.json({ data, count, limit, offset }, { headers: cors(req) });
+  } catch (error) { const status = error instanceof Error && error.message === "UNAUTHORIZED" ? 401 : 500; 
+     return Response.json({ error: status === 401 ? "No autorizado" : "No se pudieron cargar los casos" }, 
+      { status, headers: cors(req) }); }
 });

@@ -8,7 +8,7 @@ alter table public.conversations
 
 update public.conversations
 set last_activity_at = coalesce(last_activity_at, updated_at, now()),
-    inactivity_deadline_at = coalesce(inactivity_deadline_at, coalesce(last_activity_at, updated_at, now()) + interval '15 minutes')
+    inactivity_deadline_at = coalesce(inactivity_deadline_at, coalesce(last_activity_at, updated_at, now()) + interval '2 minutes')
 where last_activity_at is null or inactivity_deadline_at is null;
 
 create index if not exists conversations_inactivity_deadline_idx

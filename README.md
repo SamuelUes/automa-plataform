@@ -66,7 +66,7 @@ N8N_API_URL=https://your-n8n-host/api/v1
 N8N_API_KEY=your_n8n_api_key
 N8N_INGRESS_SECRET=your_ingress_secret
 N8N_WEBHOOK_SECRET=your_callback_secret
-FRONTEND_ORIGIN=https://your-frontend-domain
+FRONTEND_ORIGIN=https://your-frontend-domain,https://app.novatec.digital
 ```
 # n8n
 ```PROLOGISTICA_EDGE_FUNCTION_URL=https://<supabase-project>.supabase.co/functions/v1```

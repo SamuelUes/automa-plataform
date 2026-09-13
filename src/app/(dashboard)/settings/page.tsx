@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { Badge } from "@/components/ui/badge";
@@ -14,6 +14,8 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SearchableCombobox } from "@/components/dashboard/searchable-combobox";
+import { canAccessSettingsSection } from "@/lib/permissions";
+import { FunctionsHttpError } from "@supabase/supabase-js";
 import {
   Check,
   ChevronRight,
@@ -28,11 +30,23 @@ import {
   ShieldCheck,
   SlidersHorizontal,
   TerminalSquare,
+  Trash2,
+  Upload,
   Users,
   Workflow,
 } from "lucide-react";
 
 type NotificationPreferences = Record<string, boolean>;
+
+async function extractEdgeFunctionError(error: unknown, fallback: string): Promise<string> {
+  if (error instanceof FunctionsHttpError) {
+    try {
+      const body = await error.context.json();
+      if (body?.error) return body.error;
+    } catch {}
+  }
+  return fallback;
+}
 
 type Section =
   | "profile"
@@ -47,6 +61,7 @@ type Section =
 
 type SettingsData = {
   profile: {
+    id: string;
     full_name: string | null;
     email: string | null;
     avatar_url: string | null;
@@ -69,9 +84,13 @@ type SettingsData = {
     id: string;
     full_name: string | null;
     email: string | null;
+    avatar_url: string | null;
     role: string;
     is_active: boolean;
     whatsapp_phone: string | null;
+    auth_provider: string;
+    department_id: string | null;
+    last_sign_in_at: string | null;
   }>;
   conversations: Array<{ id: string; case_id: string | null; title: string | null; status: string; updated_at: string }>;
   cases: Array<{ id: string; case_number: number; title: string; status: string; updated_at: string }>;
@@ -80,6 +99,7 @@ type SettingsData = {
 
 const fallbackData: SettingsData = {
   profile: {
+    id: "",
     full_name: null,
     email: null,
     avatar_url: null,
@@ -130,6 +150,8 @@ export default function SettingsPage() {
   const [departmentName, setDepartmentName] = useState("");
   const [departmentDescription, setDepartmentDescription] = useState("");
   const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteName, setInviteName] = useState("");
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [notificationPreferences, setNotificationPreferences] = useState<NotificationPreferences>({
     approval_required: true,
     urgent_case: true,
@@ -171,6 +193,7 @@ export default function SettingsPage() {
 
       setData(nextData);
       setProfileName(nextData.profile.full_name || "");
+      setAvatarUrl(nextData.profile.avatar_url || null);
       setOrgName(nextData.organization?.name || "");
       setOrgSlug(nextData.organization?.slug || "");
 
@@ -186,6 +209,19 @@ export default function SettingsPage() {
       }
     })();
   }, []);
+
+  useEffect(() => {
+    if (
+      data.profile.role &&
+      !canAccessSettingsSection(data.profile.role, section)
+    ) {
+      setSection("profile");
+    }
+  }, [data.profile.role, section]);
+
+  const visibleSections = sections.filter((s) =>
+    canAccessSettingsSection(data.profile.role || "viewer", s.id)
+  );
 
   async function save(
     operation: string,
@@ -204,7 +240,7 @@ export default function SettingsPage() {
     setSaving(false);
     setMessage(
       error
-        ? "No se pudo guardar la configuración."
+        ? await extractEdgeFunctionError(error, "No se pudo guardar la configuración.")
         : "Cambios guardados correctamente."
     );
   }
@@ -223,6 +259,7 @@ export default function SettingsPage() {
         body: {
           operation: "invite_user",
           email: inviteEmail,
+          full_name: inviteName.trim() || undefined,
         },
       }
     );
@@ -230,7 +267,7 @@ export default function SettingsPage() {
     setSaving(false);
 
     if (error) {
-      setMessage("No se pudo enviar la invitación.");
+      setMessage(await extractEdgeFunctionError(error, "No se pudo enviar la invitación."));
       return;
     }
 
@@ -240,16 +277,43 @@ export default function SettingsPage() {
         ...current.users,
         {
           id: response?.user_id || `pending-${inviteEmail}`,
-          full_name: null,
+          full_name: inviteName.trim() || null,
           email: inviteEmail,
+          avatar_url: null,
           role: "agent",
           is_active: true,
           whatsapp_phone: null,
+          auth_provider: "email",
+          department_id: null,
+          last_sign_in_at: null,
         },
       ],
     }));
     setInviteEmail("");
+    setInviteName("");
     setMessage("Invitación enviada correctamente.");
+  }
+
+  async function deleteUser(userId: string) {
+    setSaving(true);
+    setMessage(null);
+
+    const { error } = await createClient().functions.invoke("settings", {
+      body: { operation: "user_delete", user_id: userId },
+    });
+
+    setSaving(false);
+
+    if (error) {
+      setMessage(await extractEdgeFunctionError(error, "No se pudo eliminar el usuario."));
+      return;
+    }
+
+    setData((current) => ({
+      ...current,
+      users: current.users.filter((u) => u.id !== userId),
+    }));
+    setMessage("Usuario eliminado correctamente.");
   }
 
   async function createCommand(payload: Record<string, unknown>) {
@@ -260,7 +324,7 @@ export default function SettingsPage() {
     });
     setSaving(false);
     if (error) {
-      setMessage(response?.error || "No se pudo crear el comando.");
+      setMessage(await extractEdgeFunctionError(error, "No se pudo crear el comando."));
       return null;
     }
     if (response?.command) {
@@ -291,7 +355,7 @@ export default function SettingsPage() {
     setSaving(false);
 
     if (error) {
-      setMessage("No se pudo crear el departamento.");
+      setMessage(await extractEdgeFunctionError(error, "No se pudo crear el departamento."));
       return;
     }
 
@@ -305,6 +369,64 @@ export default function SettingsPage() {
     setDepartmentName("");
     setDepartmentDescription("");
     setMessage("Departamento creado correctamente.");
+  }
+
+  async function uploadAvatar(file: File): Promise<string | null> {
+    const client = createClient();
+    const { data: { user } } = await client.auth.getUser();
+    if (!user) return null;
+
+    const { data: profile } = await (client as any)
+      .from("users")
+      .select("organization_id")
+      .eq("id", user.id)
+      .single();
+    if (!profile?.organization_id) return null;
+
+    // Validate file size (5MB limit from bucket config)
+    if (file.size > 5 * 1024 * 1024) {
+      setMessage("La imagen es demasiado grande. El límite es 5MB.");
+      return null;
+    }
+
+    // Normalize MIME type — some browsers report image/jpg instead of image/jpeg
+    const extToMime: Record<string, string> = {
+      jpg: "image/jpeg",
+      jpeg: "image/jpeg",
+      png: "image/png",
+      webp: "image/webp",
+      gif: "image/gif",
+    };
+    const ext = (file.name.split(".").pop() || "").toLowerCase();
+    const contentType = file.type || extToMime[ext] || "image/jpeg";
+
+    const filePath = `${profile.organization_id}/${user.id}/avatar-${Date.now()}.${ext || "jpg"}`;
+
+    const { error: uploadError } = await client.storage
+      .from("avatars")
+      .upload(filePath, file, { upsert: true, contentType });
+
+    if (uploadError) {
+      setMessage(`No se pudo subir la imagen: ${uploadError.message}`);
+      return null;
+    }
+
+    const { data: publicUrlData } = client.storage
+      .from("avatars")
+      .getPublicUrl(filePath);
+
+    return publicUrlData.publicUrl;
+  }
+
+  async function handleAvatarUpload(file: File) {
+    setSaving(true);
+    setMessage(null);
+    const url = await uploadAvatar(file);
+    setSaving(false);
+    if (!url) return;
+    setAvatarUrl(url);
+    await save("profile", { full_name: profileName, avatar_url: url });
+    setData((current) => ({ ...current, profile: { ...current.profile, avatar_url: url } }));
   }
 
   return (
@@ -323,7 +445,7 @@ export default function SettingsPage() {
 
       <div className="grid min-w-0 gap-6 lg:grid-cols-[230px_1fr]">
         <nav className="flex min-w-0 gap-1 overflow-x-auto pb-1 lg:block lg:space-y-1 lg:overflow-visible lg:pb-0">
-          {sections.map(({ id, label, icon: Icon }) => (
+          {visibleSections.map(({ id, label, icon: Icon }) => (
             <button
               key={id}
               onClick={() => {
@@ -350,9 +472,11 @@ export default function SettingsPage() {
               setName={setProfileName}
               email={data.profile.email || ""}
               role={data.profile.role}
+              avatarUrl={avatarUrl}
               saving={saving}
+              onAvatarUpload={handleAvatarUpload}
               onSave={() =>
-                void save("profile", { full_name: profileName })
+                void save("profile", { full_name: profileName, avatar_url: avatarUrl })
               }
             />
           )}
@@ -377,6 +501,7 @@ export default function SettingsPage() {
           {section === "users" && (
             <UsersSection
               users={data.users}
+              departments={data.departments}
               onRoleChange={(userId, role) =>
                 void save("user_role", {
                   user_id: userId,
@@ -389,9 +514,19 @@ export default function SettingsPage() {
                   whatsapp_phone: whatsappPhone,
                 })
               }
+              onDepartmentChange={(userId, departmentId) =>
+                void save("user_department", {
+                  user_id: userId,
+                  department_id: departmentId,
+                })
+              }
               inviteEmail={inviteEmail}
               setInviteEmail={setInviteEmail}
+              inviteName={inviteName}
+              setInviteName={setInviteName}
               onInvite={() => void inviteUser()}
+              onDelete={(userId) => void deleteUser(userId)}
+              currentUserId={data.profile.id}
             />
           )}
 
@@ -430,7 +565,7 @@ export default function SettingsPage() {
               onCreate={createCommand}
             />
           )}
-          {section === "security" && <SecuritySection />}
+          {section === "security" && <SecuritySection role={data.profile.role || "viewer"} />}
 
           {message && (
             <p
@@ -472,16 +607,28 @@ function ProfileSection({
   setName,
   email,
   role,
+  avatarUrl,
   saving,
+  onAvatarUpload,
   onSave,
 }: {
   name: string;
   setName: (value: string) => void;
   email: string;
   role: string;
+  avatarUrl: string | null;
   saving: boolean;
+  onAvatarUpload: (file: File) => void;
   onSave: () => void;
 }) {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const initials = (name || "?")
+    .split(" ")
+    .map((part) => part[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
+
   return (
     <>
       <SectionHeading
@@ -497,13 +644,43 @@ function ProfileSection({
 
         <CardContent className="space-y-5">
           <div className="flex items-center gap-4 pb-4 border-b">
-            <div className="h-14 w-14 rounded-full bg-[#d7e7e2] text-[#28584e] flex items-center justify-center text-lg font-semibold">
-              DG
+            <div className="relative group">
+              {avatarUrl ? (
+                <img
+                  src={avatarUrl}
+                  alt={name || "Avatar"}
+                  className="h-14 w-14 rounded-full object-cover"
+                />
+              ) : (
+                <div className="h-14 w-14 rounded-full bg-[#d7e7e2] text-[#28584e] flex items-center justify-center text-lg font-semibold">
+                  {initials}
+                </div>
+              )}
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={saving}
+                className="absolute inset-0 flex items-center justify-center rounded-full bg-black/40 opacity-0 transition-opacity group-hover:opacity-100 disabled:opacity-50"
+                aria-label="Cambiar avatar"
+              >
+                <Upload className="h-4 w-4 text-white" />
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/webp,image/gif"
+                className="hidden"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  if (file) onAvatarUpload(file);
+                  event.target.value = "";
+                }}
+              />
             </div>
             <div>
               <p className="text-sm font-medium">{name || "Tu nombre"}</p>
               <p className="text-xs text-muted-foreground mt-1">
-                Avatar generado a partir de tus iniciales
+                {avatarUrl ? "Click para cambiar tu avatar" : "Avatar generado a partir de tus iniciales"}
               </p>
             </div>
           </div>
@@ -612,19 +789,42 @@ function OrganizationSection({
 
 function UsersSection({
   users,
+  departments,
   onRoleChange,
   onWhatsAppChange,
+  onDepartmentChange,
   inviteEmail,
   setInviteEmail,
+  inviteName,
+  setInviteName,
   onInvite,
+  onDelete,
+  currentUserId,
 }: {
   users: SettingsData["users"];
+  departments: SettingsData["departments"];
   onRoleChange: (userId: string, role: string) => void;
   onWhatsAppChange: (userId: string, whatsappPhone: string | null) => void;
+  onDepartmentChange: (userId: string, departmentId: string | null) => void;
   inviteEmail: string;
   setInviteEmail: (value: string) => void;
+  inviteName: string;
+  setInviteName: (value: string) => void;
   onInvite: () => void;
+  onDelete: (userId: string) => void;
+  currentUserId: string;
 }) {
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+
+  function handleDeleteClick(userId: string) {
+    if (confirmDeleteId === userId) {
+      onDelete(userId);
+      setConfirmDeleteId(null);
+    } else {
+      setConfirmDeleteId(userId);
+    }
+  }
+
   return (
     <>
       <SectionHeading
@@ -636,40 +836,67 @@ function UsersSection({
       <Card>
         <CardContent className="p-0">
           <div className="divide-y">
-            {users.map((user) => (
+            {users.map((user) => {
+              const isInvited = !user.last_sign_in_at;
+              const isSelf = user.id === currentUserId;
+
+              return (
               <div
                 key={user.id}
                 className="flex flex-col gap-3 sm:flex-row sm:items-center px-5 py-4"
               >
-                <div className="h-8 w-8 rounded-full bg-muted flex items-center justify-center text-xs font-semibold shrink-0">
-                  {(user.full_name || "?")
-                    .split(" ")
-                    .map((part) => part[0])
-                    .join("")
-                    .slice(0, 2)}
-                </div>
+                {user.avatar_url ? (
+                  <img
+                    src={user.avatar_url}
+                    alt={user.full_name || "Avatar"}
+                    className="h-8 w-8 rounded-full object-cover shrink-0"
+                  />
+                ) : (
+                  <div className="h-8 w-8 rounded-full bg-muted flex items-center justify-center text-xs font-semibold shrink-0">
+                    {(user.full_name || "?")
+                      .split(" ")
+                      .map((part) => part[0])
+                      .join("")
+                      .slice(0, 2)}
+                  </div>
+                )}
 
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium">{user.full_name}</p>
+                  <p className="truncate text-sm font-medium">{user.full_name || "Sin nombre"}</p>
                   <p className="mt-0.5 truncate text-xs text-muted-foreground">
                     {user.email}
                   </p>
                 </div>
 
                 <Input
-                  aria-label={`WhatsApp de ${user.full_name}`}
+                  aria-label={`WhatsApp de ${user.full_name || user.email}`}
                   defaultValue={user.whatsapp_phone || ""}
                   onBlur={(event) => onWhatsAppChange(user.id, event.target.value.trim() || null)}
                   placeholder="whatsapp:+521..."
                   className="h-9 w-full text-xs sm:w-48"
                 />
 
-                <Badge variant={user.is_active ? "success" : "secondary"}>
-                  {user.is_active ? "Activo" : "Inactivo"}
-                </Badge>
+                <select
+                  aria-label={`Departamento de ${user.full_name || user.email}`}
+                  defaultValue={user.department_id || ""}
+                  onChange={(event) =>
+                    onDepartmentChange(
+                      user.id,
+                      event.target.value || null
+                    )
+                  }
+                  className="h-9 w-full rounded-md border bg-background px-3 text-xs sm:w-auto"
+                >
+                  <option value="">Sin departamento</option>
+                  {departments.map((department) => (
+                    <option key={department.id} value={department.id}>
+                      {department.name}
+                    </option>
+                  ))}
+                </select>
 
                 <select
-                  aria-label={`Rol de ${user.full_name}`}
+                  aria-label={`Rol de ${user.full_name || user.email}`}
                   defaultValue={user.role}
                   onChange={(event) =>
                     onRoleChange(user.id, event.target.value)
@@ -682,13 +909,46 @@ function UsersSection({
                   <option value="agent">Agent</option>
                   <option value="viewer">Viewer</option>
                 </select>
+
+                {isInvited ? (
+                  <Badge variant="warning">Invitado</Badge>
+                ) : (
+                  <Badge variant={user.is_active ? "success" : "secondary"}>
+                    {user.is_active ? "Activo" : "Inactivo"}
+                  </Badge>
+                )}
+
+                <Button
+                  variant={confirmDeleteId === user.id ? "destructive" : "ghost"}
+                  size="sm"
+                  className="h-8 px-2.5 shrink-0"
+                  disabled={isSelf}
+                  onClick={() => handleDeleteClick(user.id)}
+                  aria-label={`Eliminar usuario ${user.full_name || user.email || ""}`}
+                  title={isSelf ? "No puedes eliminar tu propia cuenta" : undefined}
+                >
+                  {confirmDeleteId === user.id ? (
+                    "¿Confirmar?"
+                  ) : (
+                    <Trash2 className="h-3.5 w-3.5" />
+                  )}
+                </Button>
+
               </div>
-            ))}
+              );
+            })}
           </div>
 
           <div className="p-5 border-t space-y-3">
             <p className="text-xs font-semibold">Invitar usuario</p>
             <div className="flex flex-col gap-2 sm:flex-row">
+              <Input
+                type="text"
+                value={inviteName}
+                onChange={(event) => setInviteName(event.target.value)}
+                placeholder="Nombre completo"
+                className="sm:max-w-48"
+              />
               <Input
                 type="email"
                 value={inviteEmail}
@@ -1070,7 +1330,7 @@ function CommandsSection({
   );
 }
 
-function SecuritySection() {
+function SecuritySection({ role }: { role: string }) {
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [changingPassword, setChangingPassword] = useState(false);
@@ -1167,28 +1427,30 @@ function SecuritySection() {
         </CardContent>
       </Card>
 
-      <div className="grid gap-3 sm:grid-cols-2">
-        <SecurityCard
-          icon={<ShieldCheck />}
-          title="Row Level Security"
-          detail="Activo en todas las tablas expuestas."
-        />
-        <SecurityCard
-          icon={<KeyRound />}
-          title="Credenciales"
-          detail="Secretos fuera del cliente y localStorage."
-        />
-        <SecurityCard
-          icon={<Users />}
-          title="RBAC"
-          detail="Roles validados en Edge Functions."
-        />
-        <SecurityCard
-          icon={<Database />}
-          title="Aislamiento tenant"
-          detail="Consultas limitadas a tu organización."
-        />
-      </div>
+      {role === "owner" && (
+        <div className="grid gap-3 sm:grid-cols-2">
+          <SecurityCard
+            icon={<ShieldCheck />}
+            title="Row Level Security"
+            detail="Activo en todas las tablas expuestas."
+          />
+          <SecurityCard
+            icon={<KeyRound />}
+            title="Credenciales"
+            detail="Secretos fuera del cliente y localStorage."
+          />
+          <SecurityCard
+            icon={<Users />}
+            title="RBAC"
+            detail="Roles validados en Edge Functions."
+          />
+          <SecurityCard
+            icon={<Database />}
+            title="Aislamiento tenant"
+            detail="Consultas limitadas a tu organización."
+          />
+        </div>
+      )}
     </>
   );
 }

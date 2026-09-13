@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -89,9 +90,17 @@ export default function LoginPage() {
           {loading ? <Loader2 className="animate-spin" /> : <>Entrar al Command Center <ArrowRight /></>}
         </Button>
       </form>
-      <p className="text-center text-xs text-muted-foreground mt-8">¿Necesitas acceso? 
-        <span className="text-foreground">Contacta a tu administrador.</span>
-      </p>
+      <div className="mt-8 space-y-4">
+        <p className="text-center text-xs text-muted-foreground">¿Necesitas acceso? 
+          <span className="text-foreground">Contacta a tu administrador.</span>
+        </p>
+        <p className="text-center text-xs text-muted-foreground">
+          ¿Recibiste una invitación?{" "}
+          <Link href="/accept-invite" className="text-foreground font-medium hover:underline transition-colors">
+            Acepta tu invitación
+          </Link>
+        </p>
+      </div>
       </div>
     </section>
   </main>

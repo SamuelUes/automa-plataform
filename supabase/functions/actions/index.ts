@@ -1,6 +1,6 @@
 declare const Deno: { serve(handler: (request: Request) => Response | Promise<Response>): void };
 
-import { corsHeaders } from "../_shared/cors.ts";
+import { cors } from "../_shared/cors.ts";
 import { getAuthedClient } from "../_shared/auth.ts";
 import { adminClient, createCommand, createExecution } from "../_shared/integration.ts";
 import { triggerWorkflow } from "../_shared/n8n/client.ts";
@@ -28,8 +28,12 @@ const sensitiveActions = new Set([
   "close_case",
 ]);
 
-function evaluateAuthority(actionType: string, targetWorkflowCode: string, payload: Record<string, unknown>, approvalGranted = false) {
-  const requiresApproval = !approvalGranted && (sensitiveActions.has(actionType) || actionType !== "schedule_follow_up");
+function evaluateAuthority(actionType: string, 
+  targetWorkflowCode: string, 
+  payload: Record<string, unknown>, 
+  approvalGranted = false) {
+  
+    const requiresApproval = !approvalGranted && (sensitiveActions.has(actionType) || actionType !== "schedule_follow_up");
   return {
     decision: requiresApproval ? "REQUIRES_APPROVAL" : "AUTHORIZED",
     action_type: actionType,
@@ -48,7 +52,7 @@ function evaluateAuthority(actionType: string, targetWorkflowCode: string, paylo
 }
 
 Deno.serve(async (req: Request) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+  if (req.method === "OPTIONS") return new Response("ok", { headers: cors(req) });
 
   try {
     const { client, user } = await getAuthedClient(req);
@@ -62,7 +66,7 @@ Deno.serve(async (req: Request) => {
     if (!allowed) {
       return Response.json(
         { error: "Demasiadas solicitudes. Inténtalo de nuevo en un momento." },
-        { status: 429, headers: corsHeaders },
+        { status: 429, headers: cors(req) },
       );
     }
 
@@ -70,29 +74,39 @@ Deno.serve(async (req: Request) => {
       ...body,
       idempotency_key: req.headers.get("idempotency-key") || body.idempotency_key,
     });
-    if (!parsed.success) return Response.json({ error: "Los datos de la acción no son válidos." }, { status: 422, headers: corsHeaders });
+    if (!parsed.success) return Response.json({ error: "Los datos de la acción no son válidos." }, 
+      { status: 422, headers: cors(req) });
 
     const actionType = parsed.data.action_type;
     if (actionType === "schedule_follow_up" && !body.input_data?.follow_up_id && !body.input_data?.scheduled_for) {
-      return Response.json({ error: "scheduled_for es obligatorio para crear un seguimiento" }, { status: 422, headers: corsHeaders });
+      return Response.json({ error: "scheduled_for es obligatorio para crear un seguimiento" }, 
+        { status: 422, headers: cors(req) });
     }
     const decisionWorkflowCode = targetWorkflowByAction[actionType] || (actionType === "schedule_follow_up" ? "PE06" : "PE02");
     if (privilegedActions.has(actionType)) {
       const { data: profile } = await client.from("users").select("organization_id,role").eq("id", user.id).single();
-      if (!profile || !["owner", "admin", "manager"].includes(profile.role)) return Response.json({ error: "No tienes permisos para esta acción." }, { status: 403, headers: corsHeaders });
+      if (!profile || !["owner", "admin", "manager"].includes(profile.role)) 
+        return Response.json({ error: "No tienes permisos para esta acción." }, 
+        { status: 403, headers: cors(req) });
     }
 
     const { data: profile } = await client.from("users").select("organization_id").eq("id", user.id).single();
-    if (!profile) return Response.json({ error: "Usuario sin organización" }, { status: 403, headers: corsHeaders });
+    if (!profile) return 
+      Response.json({ error: "Usuario sin organización" }, 
+        { status: 403, headers: cors(req) });
 
     if (body.case_id) {
       const { data: caseRecord } = await client.from("cases").select("id,organization_id").eq("id", body.case_id).maybeSingle();
-      if (!caseRecord || caseRecord.organization_id !== profile.organization_id) return Response.json({ error: "El caso no existe o no pertenece a tu organización." }, { status: 404, headers: corsHeaders });
+      if (!caseRecord || caseRecord.organization_id !== profile.organization_id) return 
+        Response.json({ error: "El caso no existe o no pertenece a tu organización." }, 
+          { status: 404, headers: cors(req) });
     }
 
     const idempotencyKey = parsed.data.idempotency_key;
     const { data: existing } = await client.from("actions").select("id,status,action_type").eq("idempotency_key", idempotencyKey).maybeSingle();
-    if (existing) return Response.json({ action: existing, idempotent: true }, { headers: corsHeaders });
+    if (existing) return 
+      Response.json({ action: existing, idempotent: true }, 
+        { headers: cors(req) });
 
     const { data: action, error: actionError } = await client.from("actions").insert({
       organization_id: profile.organization_id,
@@ -170,7 +184,9 @@ Deno.serve(async (req: Request) => {
         event_data: authority,
         idempotency_key: `${idempotencyKey}:authority`,
       });
-      return Response.json({ action: { ...action, status: "pending" }, workflow_execution_id: executionId, authority }, { status: 202, headers: corsHeaders });
+      return Response.json({ action: { ...action, status: "pending" }, 
+        workflow_execution_id: executionId, authority }, 
+        { status: 202, headers: cors(req) });
     }
 
     let domainOutput: Record<string, unknown> | null = null;
@@ -238,7 +254,7 @@ Deno.serve(async (req: Request) => {
         event_data: domainOutput,
         idempotency_key: `${idempotencyKey}:completed`,
       });
-      return Response.json({ action: { ...action, status: "completed" }, workflow_execution_id: executionId, authority: domainOutput }, { status: 202, headers: corsHeaders });
+      return Response.json({ action: { ...action, status: "completed" }, workflow_execution_id: executionId, authority: domainOutput }, { status: 202, headers: cors(req) });
     }
 
     try {
@@ -266,14 +282,17 @@ Deno.serve(async (req: Request) => {
       });
       await admin.from("commands").update({ status: "dispatched" }).eq("id", commandId);
       await admin.from("actions").update({ status: "queued" }).eq("id", action.id);
-      return Response.json({ action: { ...action, status: "queued" }, workflow_execution_id: executionId, n8n: result }, { status: 202, headers: corsHeaders });
+      return Response.json({ action: { ...action, status: "queued" }, 
+        workflow_execution_id: executionId, n8n: result }, 
+        { status: 202, headers: cors(req) });
     } catch (error) {
       await admin.from("workflow_executions").update({ status: "failed", error_data: { code: error instanceof Error ? error.message : "WORKFLOW_FAILED" }, finished_at: new Date().toISOString() }).eq("id", executionId);
       await admin.from("actions").update({ status: "failed", error_data: { code: "WORKFLOW_FAILED" }, completed_at: new Date().toISOString() }).eq("id", action.id);
-      return Response.json({ action: { ...action, status: "failed" }, workflow_execution_id: executionId, error: "No se pudo iniciar PE02" }, { status: 503, headers: corsHeaders });
+      return Response.json({ action: { ...action, status: "failed" }, workflow_execution_id: executionId, error: "No se pudo iniciar PE02" }, 
+        { status: 503, headers: cors(req) });
     }
   } catch (error) {
     const status = error instanceof Error && error.message === "UNAUTHORIZED" ? 401 : 500;
-    return Response.json({ error: status === 401 ? "No autorizado" : "No se pudo crear la acción" }, { status, headers: corsHeaders });
+    return Response.json({ error: status === 401 ? "No autorizado" : "No se pudo crear la acción" }, { status, headers: cors(req) });
   }
 });

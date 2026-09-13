@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Bot, Check, Clock3, Command, FileCheck2, Loader2, MessageSquare, Plus, Send, ShieldCheck, Sparkles, UserRound, X } from "lucide-react";
+import { useCurrentUser } from "@/components/providers/current-user-context";
 
 const welcomeMessages: AssistantMessage[] = [{ id: "welcome", role: "assistant", content: "Puedo ayudarte a consultar la operación y preparar acciones. Las acciones sensibles siempre requieren tu confirmación.", createdAt: "ahora" }];
 const quickCommands = ["¿Qué requiere mi atención?", "Muéstrame los seguimientos vencidos", "Resume los casos urgentes"];
@@ -31,6 +32,7 @@ function orderAssistantMessages(messages: ConversationMessage[]) {
 }
 
 export default function AssistantPage() {
+  const currentUser = useCurrentUser();
   const [messages, setMessages] = useState<AssistantMessage[]>(welcomeMessages);
   const [input, setInput] = useState("");
   const [conversationId, setConversationId] = useState<string | null>(null);
@@ -235,7 +237,12 @@ export default function AssistantPage() {
                     </div>
                   </div>}
                     </div>
-                    {message.role === "user" && <div className="h-8 w-8 rounded-full bg-[#d7e7e2] text-[#28584e] flex items-center justify-center shrink-0"><UserRound className="h-4 w-4" /></div>}
+                    {message.role === "user" && 
+                    <div className="h-8 w-8 rounded-full bg-[#d7e7e2] text-[#28584e] flex items-center justify-center shrink-0 overflow-hidden">
+                      {currentUser?.avatarUrl
+                        ? <img src={currentUser.avatarUrl} alt={currentUser.fullName} className="h-full w-full object-cover" />
+                        : <UserRound className="h-4 w-4" />}
+                    </div>}
                   </div>
                 )}
                 {sending && <div className="flex gap-3">

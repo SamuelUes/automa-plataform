@@ -1,6 +1,6 @@
 declare const Deno: { serve(handler: (request: Request) => Response | Promise<Response>): void };
 
-import { corsHeaders } from "../_shared/cors.ts";
+import { cors } from "../_shared/cors.ts";
 import { getAuthedClient } from "../_shared/auth.ts";
 import { adminClient, conversationContextUrl, createExecution, recordAssistantProgress, startConversationActivity } from "../_shared/integration.ts";
 import { triggerWorkflow } from "../_shared/n8n/client.ts";
@@ -12,7 +12,7 @@ function conversationTitle(content: string) {
 }
 
 Deno.serve(async (req: Request) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+  if (req.method === "OPTIONS") return new Response("ok", { headers: cors(req) });
 
   try {
     const { client, user } = await getAuthedClient(req);
@@ -22,14 +22,17 @@ Deno.serve(async (req: Request) => {
       p_limit: 30,
       p_window_seconds: 60,
     });
-    if (!allowed) return Response.json({ error: "Demasiadas solicitudes. Inténtalo de nuevo en un momento." }, { status: 429, headers: corsHeaders });
+    if (!allowed) return Response.json({ error: "Demasiadas solicitudes. Inténtalo de nuevo en un momento." }, 
+      { status: 429, headers: cors(req) });
 
     const parsed = assistantInputSchema.safeParse(body);
-    if (!parsed.success) return Response.json({ error: "El mensaje no es válido" }, { status: 422, headers: corsHeaders });
+    if (!parsed.success) return Response.json({ error: "El mensaje no es válido" }, 
+      { status: 422, headers: cors(req) });
 
     const { content, case_id: caseId } = parsed.data;
     const { data: profile } = await client.from("users").select("organization_id").eq("id", user.id).single();
-    if (!profile) return Response.json({ error: "Usuario sin organización" }, { status: 403, headers: corsHeaders });
+    if (!profile) return Response.json({ error: "Usuario sin organización" }, 
+      { status: 403, headers: cors(req) });
 
     const admin = adminClient();
     let conversationId = body.conversation_id as string | null;
@@ -51,7 +54,7 @@ Deno.serve(async (req: Request) => {
       conversation_id: conversationId,
       organization_id: profile.organization_id,
       source_workflow: "PE08",
-      timer_minutes: 15,
+      timer_minutes: 2,
     });
     const requestId = crypto.randomUUID();
     const envelope = {
@@ -94,7 +97,7 @@ Deno.serve(async (req: Request) => {
         workflow_execution_id: executionId, 
         status: "queued", 
         n8n: n8nResponse 
-      }, { status: 202, headers: corsHeaders });
+      }, { status: 202, headers: cors(req) });
     } catch (error) {
       await admin.from("workflow_executions").update({ status: "failed", error_data: { code: error instanceof Error ? error.message : "WORKFLOW_FAILED" }, finished_at: new Date().toISOString() }).eq("id", executionId);
       return Response.json({ 
@@ -102,10 +105,11 @@ Deno.serve(async (req: Request) => {
         workflow_execution_id: executionId, 
         status: "failed", 
         error: "No se pudo iniciar PE08" 
-      }, { status: 503, headers: corsHeaders });
+      }, { status: 503, headers: cors(req) });
     }
   } catch (error) {
     const status = error instanceof Error && error.message === "UNAUTHORIZED" ? 401 : 500;
-    return Response.json({ error: status === 401 ? "No autorizado" : "No se pudo procesar el mensaje" }, { status, headers: corsHeaders });
+    return Response.json({ error: status === 401 ? "No autorizado" : "No se pudo procesar el mensaje" }, 
+      { status, headers: cors(req) });
   }
 });

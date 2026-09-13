@@ -120,7 +120,7 @@ export async function startConversationActivity(
   params: { conversation_id: string; organization_id: string; source_workflow: string; timer_minutes?: number },
 ) {
   const timerId = crypto.randomUUID();
-  const deadline = new Date(Date.now() + (params.timer_minutes || 15) * 60_000).toISOString();
+  const deadline = new Date(Date.now() + (params.timer_minutes || 2) * 60_000).toISOString();
   const { data, error } = await admin.from("conversations").select("inactivity_generation,status").eq("id", params.conversation_id).eq("organization_id", params.organization_id).maybeSingle();
   if (error) throw error;
   if (!data) throw new Error("CONVERSATION_NOT_FOUND");

@@ -1,8 +1,9 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import type { Database } from "@/types/database";
+import { canAccessPath } from "@/lib/permissions";
 
-const PUBLIC_PATHS = ["/login", "/forgot-password", "/auth/callback"];
+const PUBLIC_PATHS = ["/login", "/forgot-password", "/accept-invite", "/auth/callback"];
 
 function isPublicPath(pathname: string) {
   return PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(p + "/"));
@@ -47,11 +48,29 @@ export async function updateSession(request: NextRequest) {
   }
 
   // Redirect to dashboard if authenticated and on login page
-  if (user && isPublicPath(pathname) && pathname !== "/auth/callback") {
+  if (user && isPublicPath(pathname) && pathname !== "/auth/callback" && pathname !== "/accept-invite") {
     const url = request.nextUrl.clone();
     url.pathname = "/dashboard";
     url.searchParams.delete("redirect");
     return NextResponse.redirect(url);
+  }
+
+  // Role-based page access control
+  if (user && !isPublicPath(pathname)) {
+    const { data: profile } = await supabase
+      .from("users")
+      .select("role")
+      .eq("id", user.id)
+      .maybeSingle();
+
+    const role = (profile as { role?: string } | null)?.role || "viewer";
+
+    if (!canAccessPath(role, pathname)) {
+      const url = request.nextUrl.clone();
+      url.pathname = "/dashboard";
+      url.searchParams.delete("redirect");
+      return NextResponse.redirect(url);
+    }
   }
 
   return supabaseResponse;

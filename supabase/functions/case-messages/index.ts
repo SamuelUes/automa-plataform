@@ -1,6 +1,6 @@
 declare const Deno: { serve(handler: (request: Request) => Response | Promise<Response>): void };
 
-import { corsHeaders } from "../_shared/cors.ts";
+import { cors } from "../_shared/cors.ts";
 import { getAuthedClient } from "../_shared/auth.ts";
 import { adminClient, conversationContextUrl, createExecution, invokeN8n, isUuid, startConversationActivity, verifyOrganization } from "../_shared/integration.ts";
 
@@ -10,16 +10,20 @@ function conversationTitle(content: string) {
 }
 
 Deno.serve(async (req: Request) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+  if (req.method === "OPTIONS") return new Response("ok", { headers: cors(req) });
 
   try {
     const { client, user } = await getAuthedClient(req);
     const body = await req.json();
     const content = typeof body.content === "string" ? body.content.trim() : "";
-    if (!content || content.length > 2000 || !isUuid(body.case_id)) return Response.json({ error: "case_id y content son obligatorios" }, { status: 422, headers: corsHeaders });
+    if (!content || content.length > 2000 || !isUuid(body.case_id)) 
+      return Response.json({ error: "case_id y content son obligatorios" }, 
+    { status: 422, headers: cors(req) });
 
     const { data: profile } = await client.from("users").select("organization_id").eq("id", user.id).single();
-    if (!profile) return Response.json({ error: "Usuario sin organización" }, { status: 403, headers: corsHeaders });
+    if (!profile) 
+      return Response.json({ error: "Usuario sin organización" }, 
+    { status: 403, headers: cors(req) });
     const admin = adminClient();
     await verifyOrganization(admin, profile.organization_id, body.case_id);
 
@@ -42,7 +46,7 @@ Deno.serve(async (req: Request) => {
       conversation_id: conversationId,
       organization_id: profile.organization_id,
       source_workflow: "PE13",
-      timer_minutes: 15,
+      timer_minutes: 2,
     });
     const requestId = crypto.randomUUID();
     const payload = {
@@ -77,13 +81,24 @@ Deno.serve(async (req: Request) => {
 
     try {
       const result = await invokeN8n(n8nPayload);
-      return Response.json({ conversation_id: conversationId, request_id: requestId, workflow_execution_id: executionId, status: "queued", n8n: result }, { status: 202, headers: corsHeaders });
+      return Response.json({ conversation_id: conversationId, 
+        request_id: requestId, 
+        workflow_execution_id: executionId, 
+        status: "queued", 
+        n8n: result }, 
+        { status: 202, headers: cors(req) });
     } catch (error) {
       await admin.from("workflow_executions").update({ status: "failed", error_data: { code: error instanceof Error ? error.message : "N8N_ERROR" }, finished_at: new Date().toISOString() }).eq("id", executionId);
-      return Response.json({ conversation_id: conversationId, request_id: requestId, workflow_execution_id: executionId, status: "failed", error: "No se pudo iniciar PE13" }, { status: 503, headers: corsHeaders });
+      return Response.json({ conversation_id: conversationId, 
+        request_id: requestId, 
+        workflow_execution_id: executionId, 
+        status: "failed", 
+        error: "No se pudo iniciar PE13" }, 
+        { status: 503, headers: cors(req) });
     }
   } catch (error) {
     const status = error instanceof Error && error.message === "UNAUTHORIZED" ? 401 : 500;
-    return Response.json({ error: status === 401 ? "No autorizado" : "No se pudo enviar el mensaje" }, { status, headers: corsHeaders });
+    return Response.json({ error: status === 401 ? "No autorizado" : "No se pudo enviar el mensaje" }, 
+      { status, headers: cors(req) });
   }
 });

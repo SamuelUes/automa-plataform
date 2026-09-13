@@ -3,7 +3,7 @@ declare const Deno: {
   serve(handler: (request: Request) => Response | Promise<Response>): void;
 };
 
-import { corsHeaders } from "../_shared/cors.ts";
+import { cors } from "../_shared/cors.ts";
 import { adminClient, conversationContextUrl, createExecution, startConversationActivity } from "../_shared/integration.ts";
 import { triggerWorkflow } from "../_shared/n8n/client.ts";
 
@@ -43,7 +43,8 @@ Deno.serve(async (req: Request) => {
   try {
     const form = await req.formData();
     const params = Object.fromEntries([...form.entries()].map(([key, value]) => [key, String(value)]));
-    if (!await isValidTwilioSignature(req, params)) return new Response("Unauthorized", { status: 401, headers: corsHeaders });
+    if (!await isValidTwilioSignature(req, params)) 
+      return new Response("Unauthorized", { status: 401, headers: cors(req) });
 
     const from = normalizeWhatsAppPhone(params.From || "");
     const content = (params.Body || "").trim();
@@ -96,7 +97,7 @@ Deno.serve(async (req: Request) => {
       conversation_id: conversation.id,
       organization_id: user.organization_id,
       source_workflow: "PE08",
-      timer_minutes: 15,
+      timer_minutes: 2,
     });
     const requestId = crypto.randomUUID();
     const envelope = {

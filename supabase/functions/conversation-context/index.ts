@@ -5,15 +5,16 @@ declare const Deno: {
 
 // @ts-expect-error Deno resolves URL imports at Edge Function runtime.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { corsHeaders } from "../_shared/cors.ts";
+import { cors } from "../_shared/cors.ts";
 import { isUuid } from "../_shared/integration.ts";
 
 Deno.serve(async (req: Request) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+  if (req.method === "OPTIONS") return new Response("ok", { headers: cors(req) });
 
   const expectedSecret = Deno.env.get("N8N_INGRESS_SECRET");
   if (!expectedSecret || req.headers.get("x-prologistica-secret") !== expectedSecret) {
-    return Response.json({ error: "Contexto no autorizado" }, { status: 401, headers: corsHeaders });
+    return Response.json({ error: "Contexto no autorizado" }, 
+      { status: 401, headers: cors(req) });
   }
 
   try {
@@ -24,7 +25,8 @@ Deno.serve(async (req: Request) => {
     const limit = Math.min(Math.max(Number(body.limit) || 20, 1), 100);
 
     if (!isUuid(conversationId) || !isUuid(organizationId) || (caseId && !isUuid(caseId))) {
-      return Response.json({ error: "conversation_id y organization_id son obligatorios" }, { status: 422, headers: corsHeaders });
+      return Response.json({ error: "conversation_id y organization_id son obligatorios" }, 
+        { status: 422, headers: cors(req) });
     }
 
     const url = Deno.env.get("SUPABASE_URL");
@@ -40,7 +42,8 @@ Deno.serve(async (req: Request) => {
     const { data: conversation, error: conversationError } = await conversationQuery.maybeSingle();
     if (conversationError) throw conversationError;
     if (!conversation || (caseId && conversation.case_id !== caseId)) {
-      return Response.json({ error: "Conversación no encontrada" }, { status: 404, headers: corsHeaders });
+      return Response.json({ error: "Conversación no encontrada" }, 
+        { status: 404, headers: cors(req) });
     }
 
     const { data: messages, error: messagesError } = await admin
@@ -72,8 +75,9 @@ Deno.serve(async (req: Request) => {
       messages: (messages || []).reverse(),
       cases: ((cases || []) as CaseContext[]).map((item) => ({ case_number: item.case_number, title: item.title, status: item.status, priority: item.priority, updated_at: item.updated_at })),
       instructions: "Al mencionar casos, usa siempre title y case_number; no muestres UUIDs ni identifiques casos solo por id.",
-    }, { headers: { ...corsHeaders, "Cache-Control": "no-store" } });
+    }, { headers: { ...cors(req), "Cache-Control": "no-store" } });
   } catch (error) {
-    return Response.json({ error: error instanceof Error ? error.message : "No se pudo cargar el contexto" }, { status: 500, headers: corsHeaders });
+    return Response.json({ error: error instanceof Error ? error.message : "No se pudo cargar el contexto" }, 
+      { status: 500, headers: cors(req) });
   }
 });
