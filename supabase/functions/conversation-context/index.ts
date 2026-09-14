@@ -52,7 +52,14 @@ function rows(data: unknown): Record<string, unknown>[] {
 
 async function query(adapter: QueryAdapter, source: string, spec: QuerySpec) {
   const result = await adapter.query(source, spec);
-  if (result.error) throw new BrokerError("SOURCE_QUERY_FAILED", source, true);
+  if (result.error) {
+    const detail = result.error instanceof Error
+      ? result.error.message
+      : typeof result.error === "object" && result.error !== null && "message" in result.error
+        ? String((result.error as { message?: unknown }).message || "query failed")
+        : "query failed";
+    throw new BrokerError("SOURCE_QUERY_FAILED", source, true, detail.slice(0, 240));
+  }
   return rows(result.data);
 }
 
@@ -259,14 +266,28 @@ export async function handleContextBroker(req: Request, adapter?: QueryAdapter):
   try {
     const parsed = contextBrokerRequestSchema.safeParse(await req.json());
     if (!parsed.success) return Response.json({ error: { code: "INVALID_CONTEXT_REQUEST", source: "request", retryable: false, details: parsed.error.flatten() } }, { status: 422, headers: cors(req) });
-    const queryAdapter = adapter || supabaseAdapter(createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!));
+    const queryAdapter = adapter && typeof adapter.query === "function"
+      ? adapter
+      : supabaseAdapter(createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!));
     const response = await executeContextBroker(queryAdapter, parsed.data);
     return Response.json({ ...response, request_id: parsed.data.request_id }, { headers: { ...cors(req), "Cache-Control": "no-store" } });
   } catch (error) {
     if (error instanceof SyntaxError) {
       return Response.json({ error: { code: "INVALID_CONTEXT_REQUEST", source: "request", retryable: false } }, { status: 422, headers: cors(req) });
     }
-    const e = error instanceof BrokerError ? error : new BrokerError("BROKER_FAILURE", "broker", true);
+    const e = error instanceof BrokerError
+      ? error
+      : new BrokerError(
+        "BROKER_FAILURE",
+        "broker",
+        true,
+        error instanceof Error ? error.message.slice(0, 240) : String(error).slice(0, 240),
+      );
+    console.error("CONTEXT_BROKER_FAILURE", {
+      code: e.code,
+      source: e.source,
+      message: e.message.slice(0, 240),
+    });
     const status = e.code === "CONVERSATION_NOT_FOUND" ? 404 : ["CONVERSATION_CASE_MISMATCH", "CONVERSATION_SCOPE_MISMATCH"].includes(e.code) ? 422 : 500;
     return Response.json({ error: { code: e.code, source: e.source, retryable: e.retryable } }, { status, headers: cors(req) });
   }
