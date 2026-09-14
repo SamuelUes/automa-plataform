@@ -6,7 +6,8 @@ import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ArrowRight, CheckCircle2, Command, Loader2 } from "lucide-react";
+import { ArrowRight, CheckCircle2, Loader2 } from "lucide-react";
+import { Logo } from "@/components/brand/logo";
 
 export default function ResetPasswordPage() {
   const router = useRouter();
@@ -59,7 +60,7 @@ export default function ResetPasswordPage() {
       <div className="w-full max-w-md">
         <div className="flex items-center gap-3 mb-10">
           <div className="h-9 w-9 rounded-lg bg-primary text-primary-foreground flex items-center justify-center">
-            <Command className="h-5 w-5" />
+            <Logo className="h-5 w-5" />
           </div>
           <span className="font-semibold tracking-tight">
             Prologistica 

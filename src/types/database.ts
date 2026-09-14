@@ -223,6 +223,7 @@ export type Database = {
           case_id: string | null;
           external_message_id: string | null;
           direction: EmailDirection;
+          evaluation: PriorityLevel;
           sender: Json;
           recipients: Json;
           cc: Json;
@@ -243,6 +244,7 @@ export type Database = {
           case_id?: string | null;
           external_message_id?: string | null;
           direction: EmailDirection;
+          evaluation?: PriorityLevel;
           sender?: Json;
           recipients?: Json;
           cc?: Json;
@@ -257,6 +259,7 @@ export type Database = {
         };
         Update: {
           case_id?: string | null;
+          evaluation?: PriorityLevel;
           subject?: string | null;
           body_text?: string | null;
           body_html?: string | null;
@@ -411,6 +414,7 @@ export type Database = {
           status: ActionStatus;
           requested_by: string | null;
           approved_by: string | null;
+          workflow_id: string | null;
           workflow_name: string | null;
           n8n_execution_id: string | null;
           input_data: Json;
@@ -420,6 +424,7 @@ export type Database = {
           created_at: string;
           started_at: string | null;
           completed_at: string | null;
+          decision_id: string | null;
         };
         Insert: {
           id?: string;
@@ -431,6 +436,7 @@ export type Database = {
           status?: ActionStatus;
           requested_by?: string | null;
           approved_by?: string | null;
+          workflow_id?: string | null;
           workflow_name?: string | null;
           input_data?: Json;
           output_data?: Json;
@@ -438,6 +444,8 @@ export type Database = {
           idempotency_key?: string | null;
         };
         Update: {
+          workflow_id?: string | null;
+          workflow_name?: string | null;
           status?: ActionStatus;
           n8n_execution_id?: string | null;
           output_data?: Json;

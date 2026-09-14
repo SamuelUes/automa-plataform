@@ -335,7 +335,7 @@ Deno.serve(async (req: Request) => {
       return Response.json({ user: data }, { headers: cors(req) });
     }
 
-    if (operation === "invite_user") {
+    if (operation === "invite_user" || operation === "create_user_without_invite") {
       const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
       const fullName = typeof body.full_name === "string" ? body.full_name.trim() : "";
       const authProvider = typeof body.auth_provider === "string" ? body.auth_provider.trim().toLowerCase() : "email";
@@ -368,16 +368,37 @@ Deno.serve(async (req: Request) => {
         );
       }
 
-      const origin = req.headers.get("Origin") || Deno.env.get("FRONTEND_ORIGIN")?.split(",")[0]?.trim() || "http://localhost:3000";
-      const redirectTo = `${origin}/auth/callback?next=/accept-invite`;
+      const metadata = {
+        organization_id: organizationId,
+        ...(fullName ? { full_name: fullName } : {}),
+      };
 
-      const { data, error } = await adminClient.auth.admin.inviteUserByEmail(email, {
-        redirectTo,
-        data: {
-          organization_id: organizationId,
-          ...(fullName ? { full_name: fullName } : {}),
-        },
-      });
+      let data: { user: { id: string } } | null = null;
+      let error: { message?: string } | null = null;
+
+      if (operation === "create_user_without_invite") {
+        // Fallback for email delivery limits: create the Auth/public user so the
+        // administrator can share /accept-invite through another channel.
+        const result = await adminClient.auth.admin.createUser({
+          email,
+          email_confirm: true,
+          user_metadata: metadata,
+        });
+        data = result.data;
+        error = result.error;
+      } else {
+        // Invitation links must always land on the production app, not on the
+        // origin of the administrator's browser (which may be localhost).
+        const configuredAppUrl = Deno.env.get("APP_URL")?.trim();
+        const appOrigin = configuredAppUrl || "https://app.novatec.digital";
+        const redirectTo = `${appOrigin.replace(/\/$/, "")}/auth/callback?next=/accept-invite`;
+        const result = await adminClient.auth.admin.inviteUserByEmail(email, {
+          redirectTo,
+          data: metadata,
+        });
+        data = result.data;
+        error = result.error;
+      }
 
       if (error) {
         const message = error.message || "";
@@ -390,6 +411,10 @@ Deno.serve(async (req: Request) => {
         throw error;
       }
 
+      if (!data?.user?.id) {
+        throw new Error("No se pudo crear el usuario.");
+      }
+
       // The handle_new_user trigger creates the public.users row from metadata.
       // Update auth_provider explicitly since the trigger doesn't set it.
       if (fullName || authProvider !== "email") {
@@ -400,7 +425,13 @@ Deno.serve(async (req: Request) => {
       }
 
       return Response.json(
-        { invited: true, user_id: data.user.id, full_name: fullName || null, auth_provider: authProvider },
+        {
+          invited: operation === "invite_user",
+          created_without_invite: operation === "create_user_without_invite",
+          user_id: data.user.id,
+          full_name: fullName || null,
+          auth_provider: authProvider,
+        },
         { status: 201, headers: cors(req) }
       );
     }

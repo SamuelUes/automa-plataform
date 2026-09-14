@@ -42,12 +42,58 @@ Deno.serve(async (req: Request) => {
       );
     }
 
+    const { data: profile } = await client
+      .from("users")
+      .select("role")
+      .eq("id", user.id)
+      .maybeSingle();
+    const isAgent = profile?.role === "agent";
+    let assignedCaseIds: string[] | null = null;
+
+    if (isAgent) {
+      const { data: assignedCases } = await client
+        .from("cases")
+        .select("id")
+        .eq("assigned_to", user.id);
+      assignedCaseIds = (assignedCases || []).map((item: { id: string }) => item.id);
+    }
+
     const pattern = `%${term}%`;
+    const casesQuery = client
+      .from("cases")
+      .select("id,case_number,title,status,priority,updated_at")
+      .or(`title.ilike.${pattern},source_id.ilike.${pattern}`)
+      .limit(8);
+    const emailsQuery = client
+      .from("emails")
+      .select("id,subject,sender,received_at,case_id")
+      .or(`subject.ilike.${pattern},body_text.ilike.${pattern}`)
+      .limit(8);
+    const actionsQuery = client
+      .from("actions")
+      .select("id,action_type,status,created_at,case_id")
+      .ilike("action_type", pattern)
+      .limit(8);
+
+    if (isAgent) {
+      const ids = assignedCaseIds || [];
+      if (ids.length) {
+        casesQuery.in("id", ids);
+        emailsQuery.in("case_id", ids);
+        actionsQuery.in("case_id", ids);
+      } else {
+        const emptyId = "00000000-0000-0000-0000-000000000000";
+        casesQuery.eq("id", emptyId);
+        emailsQuery.eq("case_id", emptyId);
+        actionsQuery.eq("case_id", emptyId);
+      }
+    }
+
     const [cases, emails, contacts, actions] = await Promise.all([
-      client.from("cases").select("id,case_number,title,status,priority,updated_at").or(`title.ilike.${pattern},source_id.ilike.${pattern}`).limit(8),
-      client.from("emails").select("id,subject,sender,received_at,case_id").or(`subject.ilike.${pattern},body_text.ilike.${pattern}`).limit(8),
+      casesQuery,
+      emailsQuery,
       client.from("contacts").select("id,name,email,company,updated_at").or(`name.ilike.${pattern},email.ilike.${pattern},company.ilike.${pattern}`).limit(8),
-      client.from("actions").select("id,action_type,status,created_at,case_id").ilike("action_type", pattern).limit(8),
+      actionsQuery,
     ]);
 
     return Response.json(

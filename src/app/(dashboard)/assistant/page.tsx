@@ -40,6 +40,7 @@ export default function AssistantPage() {
   const [sending, setSending] = useState(false);
   const [progress, setProgress] = useState<ProgressState>(null);
   const [confirming, setConfirming] = useState<string | null>(null);
+  const [conversationUpdating, setConversationUpdating] = useState<"resume" | "close" | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [conversationStatus, setConversationStatus] = useState<"active" | "paused" | "closed">("active");
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -103,14 +104,20 @@ export default function AssistantPage() {
     return false;
   }
   async function updateConversation(operation: "resume" | "close") {
-    if (!conversationId) return;
-    const { data, error } = await createClient().functions.invoke("conversation-control", 
-      { body: { operation, conversation_id: conversationId } });
-    if (error) { setNotice("No se pudo actualizar la conversación."); return; }
-    setConversationStatus(operation === "close" ? "closed" : "active");
-    setNotice(operation === "close" ? "Conversación finalizada." : "Conversación reanudada.");
-    await refreshMessages();
-    return data;
+    if (!conversationId || conversationUpdating) return;
+    setConversationUpdating(operation);
+    setNotice(null);
+    try {
+      const { data, error } = await createClient().functions.invoke("conversation-control",
+        { body: { operation, conversation_id: conversationId } });
+      if (error) { setNotice("No se pudo actualizar la conversación."); return; }
+      setConversationStatus(operation === "close" ? "closed" : "active");
+      setNotice(operation === "close" ? "Conversación finalizada." : "Conversación reanudada.");
+      await refreshMessages();
+      return data;
+    } finally {
+      setConversationUpdating(null);
+    }
   }
   async function sendMessage(event: FormEvent<HTMLFormElement>) { event.preventDefault(); 
     const content = input.trim(); 
@@ -213,7 +220,10 @@ export default function AssistantPage() {
                 </div>
                 <div className="flex-1 overflow-y-auto p-5 sm:p-8 space-y-6 scrollbar-thin">{messages.map((message) => 
                   <div key={message.id} className={`flex gap-3 ${message.role === "user" ? "justify-end" : ""}`}>{message.role === "assistant" && 
-                   <div className="h-8 w-8 rounded-lg bg-primary text-primary-foreground flex items-center justify-center shrink-0"><Bot className="h-4 w-4" /></div>}
+                   <div className="h-8 w-8 rounded-lg bg-primary text-primary-foreground flex items-center justify-center shrink-0">
+                    <Bot className="h-4 w-4" />
+                   </div>}
+                   
                    <div className={`max-w-[min(650px,85%)] ${message.role === "user" ? "items-end" : ""}`}>
                     <div className={`rounded-xl px-4 py-3 text-sm leading-relaxed ${message.role === "user" ? "bg-[#106353] text-primary-foreground" : "bg-muted/50"}`}><MarkdownMessage content={message.content} />
                     </div>
@@ -259,15 +269,17 @@ export default function AssistantPage() {
                   <p className="mt-1 text-xs text-muted-foreground">Envía un nuevo mensaje para reactivarlo.</p>
                 </div>}
                 {conversationStatus === "paused" && 
-                <div className="rounded-xl border border-warning/40 bg-gray-100 p-4">
+                <div className="rounded-xl border border-warning/40 bg-warning/10 p-4">
                   <p className="text-sm font-semibold">Conversación pausada por inactividad</p>
                   <p className="mt-1 text-xs text-muted-foreground">No hubo actividad durante el tiempo establecido. Puedes reanudarla o finalizarla.</p>
                   <div className="mt-3 flex flex-wrap gap-2">
-                    <Button size="sm" variant="outline" style={{ backgroundColor: "#75d48d" }} onClick={() => void updateConversation("resume")}>
-                      <MessageSquare />Reanudar conversación
+                    <Button size="sm" variant="outline" className="border-success/40 bg-success/10 text-success hover:bg-success/20 hover:text-success" onClick={() => void updateConversation("resume")} disabled={conversationUpdating !== null}>
+                      {conversationUpdating === "resume" ? <Loader2 className="animate-spin" /> : <MessageSquare />}
+                      {conversationUpdating === "resume" ? "Reanudando..." : "Reanudar conversación"}
                     </Button>
-                    <Button size="sm" variant="destructive" onClick={() => void updateConversation("close")}>
-                      <X />Finalizar conversación
+                    <Button size="sm" variant="destructive" onClick={() => void updateConversation("close")} disabled={conversationUpdating !== null}>
+                      {conversationUpdating === "close" ? <Loader2 className="animate-spin" /> : <X />}
+                      {conversationUpdating === "close" ? "Finalizando..." : "Finalizar conversación"}
                     </Button>
                   </div>
                 </div>}

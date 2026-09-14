@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { hasRole } from "@/lib/permissions";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { BriefcaseBusiness, FileCheck2, Inbox, LayoutDashboard, Mail, Search, Settings, Users, Workflow, X } from "lucide-react";
@@ -42,17 +43,42 @@ export function GlobalSearch() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
+  const [role, setRole] = useState("viewer");
+
+  useEffect(() => {
+    void (async () => {
+      const client = createClient();
+      const { data: { user } } = await client.auth.getUser();
+      if (!user) return;
+      const { data: profile } = await (client as any)
+        .from("users")
+        .select("role")
+        .eq("id", user.id)
+        .maybeSingle();
+      if (profile?.role) setRole(profile.role);
+    })();
+  }, []);
+
+  const visibleCommands = useMemo(
+    () => commands.filter((item) => {
+      if (item.id === "nav-automations" || item.id === "nav-settings") return role === "owner";
+      if (item.id === "nav-cases") return hasRole(role, "manager");
+      if (item.id === "nav-emails" || item.id === "nav-approvals") return hasRole(role, "agent");
+      return true;
+    }),
+    [role]
+  );
 
   const items = useMemo<SearchItem[]>(() => {
     const normalized = query.trim().toLowerCase();
-    if (normalized.length < 2) return commands.filter((item) => !normalized || `${item.label} ${item.meta}`.toLowerCase().includes(normalized));
+    if (normalized.length < 2) return visibleCommands.filter((item) => !normalized || `${item.label} ${item.meta}`.toLowerCase().includes(normalized));
     return [
       ...results.cases.map((item) => ({ id: `case-${item.id}`, label: item.title, meta: `Caso #${item.case_number}`, href: `/cases/${item.id}`, icon: BriefcaseBusiness })),
       ...results.emails.map((item) => ({ id: `email-${item.id}`, label: item.subject || "Sin asunto", meta: "Correo", href: item.case_id ? `/cases/${item.case_id}` : "/emails", icon: Mail })),
       ...results.contacts.map((item) => ({ id: `contact-${item.id}`, label: item.name || "Sin nombre", meta: item.company || "Contacto", href: `/cases?search=${encodeURIComponent(item.name || item.company || "")}`, icon: Users })),
       ...results.actions.map((item) => ({ id: `action-${item.id}`, label: item.action_type, meta: "Acción", href: item.case_id ? `/cases/${item.case_id}` : "/activity", icon: FileCheck2 })),
     ];
-  }, [query, results]);
+  }, [query, results, visibleCommands]);
 
   const focusSearch = useCallback(() => {
     const input = window.matchMedia("(min-width: 768px)").matches ? desktopInputRef.current : mobileInputRef.current;

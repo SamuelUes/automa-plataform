@@ -1,4 +1,4 @@
--- Active: 1787530257995@@aws-0-us-east-1.pooler.supabase.com@5432@postgres@public
+-- Active: 1789052866193@@db.aqackcsunogyyyhclixh.supabase.co@5432@postgres@public
 -- ============================================================
 -- PROLOGISTICA / EXECUTIVE AGENT PLATFORM
 -- SUPABASE DATABASE INITIAL SCHEMA
@@ -498,6 +498,9 @@ create table if not exists public.emails (
     external_message_id text,
 
     direction public.email_direction not null,
+
+    evaluation text not null default 'normal'
+        check (evaluation in ('low', 'normal', 'high', 'urgent', 'critical')),
 
     sender jsonb not null default '{}'::jsonb,
 

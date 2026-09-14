@@ -128,6 +128,7 @@ Deno.serve(async (req: Request) => {
           output_data: outputData,
           error_data: errorData,
           n8n_execution_id: body.n8n_execution_id || null,
+          started_at: new Date().toISOString(),
           completed_at: ["completed", "failed", "cancelled"].includes(actionStatus) ? new Date().toISOString() : null,
         })
         .eq("id", execution.action_id)

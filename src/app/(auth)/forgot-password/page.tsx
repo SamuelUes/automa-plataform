@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Logo } from "@/components/brand/logo";
 import { ArrowLeft, ArrowRight, CheckCircle2, Command, Loader2, Mail } from "lucide-react";
 
 export default function ForgotPasswordPage() {
@@ -43,7 +44,7 @@ export default function ForgotPasswordPage() {
 
         <div className="flex items-center gap-3 mb-10">
           <div className="h-9 w-9 rounded-lg bg-primary text-primary-foreground flex items-center justify-center">
-            <Command className="h-5 w-5" />
+            <Logo className="h-5 w-5" />
           </div>
           <span className="font-semibold tracking-tight">Prologistica <span className="text-muted-foreground">AI</span></span>
         </div>

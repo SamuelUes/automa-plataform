@@ -160,6 +160,7 @@ export default function SettingsPage() {
   });
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [manualInvite, setManualInvite] = useState<{ email: string; name: string } | null>(null);
 
   useEffect(() => {
     void (async () => {
@@ -267,10 +268,12 @@ export default function SettingsPage() {
     setSaving(false);
 
     if (error) {
+      setManualInvite({ email: inviteEmail.trim().toLowerCase(), name: inviteName.trim() });
       setMessage(await extractEdgeFunctionError(error, "No se pudo enviar la invitación."));
       return;
     }
 
+    setManualInvite(null);
     setData((current) => ({
       ...current,
       users: [
@@ -292,6 +295,51 @@ export default function SettingsPage() {
     setInviteEmail("");
     setInviteName("");
     setMessage("Invitación enviada correctamente.");
+  }
+
+  async function createUserWithoutInvite() {
+    if (!manualInvite) return;
+
+    setSaving(true);
+    setMessage(null);
+
+    const { data: response, error } = await createClient().functions.invoke("settings", {
+      body: {
+        operation: "create_user_without_invite",
+        email: manualInvite.email,
+        full_name: manualInvite.name || undefined,
+      },
+    });
+
+    setSaving(false);
+
+    if (error) {
+      setMessage(await extractEdgeFunctionError(error, "No se pudo crear el usuario."));
+      return;
+    }
+
+    setData((current) => ({
+      ...current,
+      users: [
+        ...current.users,
+        {
+          id: response?.user_id || `manual-${manualInvite.email}`,
+          full_name: manualInvite.name || null,
+          email: manualInvite.email,
+          avatar_url: null,
+          role: "agent",
+          is_active: true,
+          whatsapp_phone: null,
+          auth_provider: "email",
+          department_id: null,
+          last_sign_in_at: null,
+        },
+      ],
+    }));
+    setInviteEmail("");
+    setInviteName("");
+    setManualInvite(null);
+    setMessage("Usuario creado. Comparte el correo y abre /accept-invite para completar su registro.");
   }
 
   async function deleteUser(userId: string) {
@@ -525,6 +573,8 @@ export default function SettingsPage() {
               inviteName={inviteName}
               setInviteName={setInviteName}
               onInvite={() => void inviteUser()}
+              manualInvite={manualInvite}
+              onCreateWithoutInvite={() => void createUserWithoutInvite()}
               onDelete={(userId) => void deleteUser(userId)}
               currentUserId={data.profile.id}
             />
@@ -798,6 +848,8 @@ function UsersSection({
   inviteName,
   setInviteName,
   onInvite,
+  manualInvite,
+  onCreateWithoutInvite,
   onDelete,
   currentUserId,
 }: {
@@ -811,6 +863,8 @@ function UsersSection({
   inviteName: string;
   setInviteName: (value: string) => void;
   onInvite: () => void;
+  manualInvite: { email: string; name: string } | null;
+  onCreateWithoutInvite: () => void;
   onDelete: (userId: string) => void;
   currentUserId: string;
 }) {
@@ -964,6 +1018,23 @@ function UsersSection({
                 Enviar invitación
               </Button>
             </div>
+
+            {manualInvite ? (
+              <div className="rounded-md border border-warning/30 bg-warning/10 p-3 text-xs">
+                <p className="font-medium">No se pudo enviar el correo a {manualInvite.email}.</p>
+                <p className="mt-1 text-muted-foreground">
+                  Puedes crear el usuario de todos modos y compartirle manualmente el acceso a <code>/accept-invite</code>.
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="mt-3"
+                  onClick={onCreateWithoutInvite}
+                >
+                  Crear usuario sin enviar correo
+                </Button>
+              </div>
+            ) : null}
           </div>
         </CardContent>
       </Card>

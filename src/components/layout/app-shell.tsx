@@ -11,8 +11,9 @@ import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { CurrentUserProvider } from "@/components/providers/current-user-context";
+import { Logo } from "@/components/brand/logo";
 import { canAccessPath } from "@/lib/permissions";
-import { Bot, BriefcaseBusiness, ChevronRight, CircleHelp, Command, FileText, Inbox, LayoutDashboard, LogOut, Menu, Moon, PanelLeft, Settings, Sun, Users, Workflow, Zap } from "lucide-react";
+import { Bot, BriefcaseBusiness, ChevronRight, CircleHelp, FileText, Inbox, LayoutDashboard, LogOut, Menu, Moon, PanelLeft, Settings, Sun, Users, Workflow, Zap } from "lucide-react";
 import { useTheme } from "next-themes";
 
 const mainNav = [
@@ -60,7 +61,7 @@ function NavContent({ collapsed, onNavigate, badges, role }: { collapsed: boolea
   return <>
   <div className="flex items-center gap-3 h-12 mb-8 px-2">
     <div className="h-8 w-8 rounded-lg bg-primary text-primary-foreground flex items-center justify-center shrink-0">
-      <Command className="h-4 w-4" />
+      <Logo className="h-5 w-5" />
     </div>
     {!collapsed && <div className="font-semibold text-sm tracking-tight">Prologistica 
       <span className="text-muted-foreground font-normal">AI</span>

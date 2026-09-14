@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Logo } from "@/components/brand/logo";
 import { AlertCircle, ArrowRight, Command, Loader2, ShieldCheck } from "lucide-react";
 
 export default function LoginPage() {
@@ -35,7 +36,7 @@ export default function LoginPage() {
       <div className="absolute inset-0 opacity-30" style={{ backgroundImage: "linear-gradient(rgba(255,255,255,.06) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.06) 1px, transparent 1px)", backgroundSize: "48px 48px" }} />
       <div className="relative flex items-center gap-3">
         <div className="h-9 w-9 rounded-lg bg-white text-[#1b2028] flex items-center justify-center">
-          <Command className="h-5 w-5" />
+          <Logo className="h-5 w-5" />
         </div>
         <span className="text-white/45 ">Pro 
           <span className="text-white/85 font-semibold tracking-tight">logistica</span>
@@ -59,7 +60,7 @@ export default function LoginPage() {
       <div className="w-full max-w-95">
         <div className="lg:hidden flex items-center gap-3 mb-16">
           <div className="h-9 w-9 rounded-lg bg-primary text-primary-foreground flex items-center justify-center">
-            <Command className="h-5 w-5" />
+            <Logo className="h-5 w-5" />
           </div>
           <span className="font-semibold">Prologistica 
             <span className="text-muted-foreground">AI

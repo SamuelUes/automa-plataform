@@ -33,7 +33,7 @@ function evaluateAuthority(actionType: string,
   payload: Record<string, unknown>, 
   approvalGranted = false) {
   
-    const requiresApproval = !approvalGranted && (sensitiveActions.has(actionType) || actionType !== "schedule_follow_up");
+    const requiresApproval = !approvalGranted && sensitiveActions.has(actionType);
   return {
     decision: requiresApproval ? "REQUIRES_APPROVAL" : "AUTHORIZED",
     action_type: actionType,
@@ -57,11 +57,21 @@ Deno.serve(async (req: Request) => {
   try {
     const { client, user } = await getAuthedClient(req);
     const body = await req.json();
-    const { data: allowed } = await client.rpc("check_rate_limit", {
-      p_key: `actions:${user.id}`,
-      p_limit: 60,
-      p_window_seconds: 60,
-    });
+    let allowed: boolean | null = null;
+    try {
+      const rateLimit = await client.rpc("check_rate_limit", {
+        p_key: `actions:${user.id}`,
+        p_limit: 60,
+        p_window_seconds: 60,
+      });
+      if (rateLimit.error) throw rateLimit.error;
+      allowed = rateLimit.data;
+    } catch {
+      return Response.json(
+        { error: "No se pudo validar el límite de solicitudes. Inténtalo de nuevo." },
+        { status: 503, headers: cors(req) },
+      );
+    }
 
     if (!allowed) {
       return Response.json(
@@ -78,11 +88,15 @@ Deno.serve(async (req: Request) => {
       { status: 422, headers: cors(req) });
 
     const actionType = parsed.data.action_type;
+    if (actionType === "execute_workflow" && typeof body.workflow_code !== "string") {
+      return Response.json({ error: "workflow_code es obligatorio para ejecutar un workflow." },
+        { status: 422, headers: cors(req) });
+    }
     if (actionType === "schedule_follow_up" && !body.input_data?.follow_up_id && !body.input_data?.scheduled_for) {
       return Response.json({ error: "scheduled_for es obligatorio para crear un seguimiento" }, 
         { status: 422, headers: cors(req) });
     }
-    const decisionWorkflowCode = targetWorkflowByAction[actionType] || (actionType === "schedule_follow_up" ? "PE06" : "PE02");
+    const targetWorkflowCode = targetWorkflowByAction[actionType] || body.workflow_code || (actionType === "schedule_follow_up" ? "PE06" : "PE02");
     if (privilegedActions.has(actionType)) {
       const { data: profile } = await client.from("users").select("organization_id,role").eq("id", user.id).single();
       if (!profile || !["owner", "admin", "manager"].includes(profile.role)) 
@@ -91,38 +105,54 @@ Deno.serve(async (req: Request) => {
     }
 
     const { data: profile } = await client.from("users").select("organization_id").eq("id", user.id).single();
-    if (!profile) return 
-      Response.json({ error: "Usuario sin organización" }, 
-        { status: 403, headers: cors(req) });
+    if (!profile) return Response.json(
+      { error: "Usuario sin organización" },
+      { status: 403, headers: cors(req) },
+    );
 
     if (body.case_id) {
       const { data: caseRecord } = await client.from("cases").select("id,organization_id").eq("id", body.case_id).maybeSingle();
-      if (!caseRecord || caseRecord.organization_id !== profile.organization_id) return 
-        Response.json({ error: "El caso no existe o no pertenece a tu organización." }, 
-          { status: 404, headers: cors(req) });
+      if (!caseRecord || caseRecord.organization_id !== profile.organization_id) return Response.json(
+        { error: "El caso no existe o no pertenece a tu organización." },
+        { status: 404, headers: cors(req) },
+      );
     }
 
     const idempotencyKey = parsed.data.idempotency_key;
     const { data: existing } = await client.from("actions").select("id,status,action_type").eq("idempotency_key", idempotencyKey).maybeSingle();
-    if (existing) return 
-      Response.json({ action: existing, idempotent: true }, 
-        { headers: cors(req) });
+    if (existing) return Response.json(
+      { action: existing, idempotent: true },
+      { headers: cors(req) },
+    );
 
-    const { data: action, error: actionError } = await client.from("actions").insert({
+    const admin = adminClient();
+    const { data: workflow, error: workflowError } = await admin
+      .from("workflow_definitions")
+      .select("id,code")
+      .eq("organization_id", profile.organization_id)
+      .eq("code", targetWorkflowCode)
+      .maybeSingle();
+    if (workflowError) throw workflowError;
+    const actionInputData = {
+      action_type: actionType,
+      target_workflow_code: targetWorkflowCode,
+      payload: body.input_data || {},
+    };
+    const startedAt = new Date().toISOString();
+    const { data: action, error: actionError } = await admin.from("actions").insert({
       organization_id: profile.organization_id,
       case_id: body.case_id || null,
       conversation_id: body.conversation_id || null,
       message_id: body.message_id || null,
       action_type: actionType,
       requested_by: user.id,
-      workflow_name: "PE02",
-      input_data: { ...body.input_data, target_workflow_code: targetWorkflowByAction[actionType] || body.workflow_code || null },
+      workflow_id: workflow?.id || null,
+      workflow_name: workflow?.code || targetWorkflowCode,
+      input_data: actionInputData,
       idempotency_key: idempotencyKey,
-    }).select("id,status,action_type,created_at").single();
+      started_at: startedAt,
+    }).select("id,status,action_type,workflow_id,workflow_name,input_data,created_at,started_at").single();
     if (actionError) throw actionError;
-
-    const admin = adminClient();
-    const targetWorkflowCode = targetWorkflowByAction[actionType] || body.workflow_code || "PE02";
     let approvalGranted = false;
     if (body.approval_id) {
       const { data: approval } = await client.from("approvals").select("id,status,organization_id").eq("id", body.approval_id).eq("organization_id", profile.organization_id).maybeSingle();
@@ -147,11 +177,16 @@ Deno.serve(async (req: Request) => {
       idempotency_key: `${idempotencyKey}:decision`,
     }).select("id").single();
     if (decisionError) throw decisionError;
-    await admin.from("actions").update({ decision_id: decision.id }).eq("id", action.id);
+    const { error: actionDecisionError } = await admin
+      .from("actions")
+      .update({ decision_id: decision.id })
+      .eq("id", action.id)
+      .eq("organization_id", profile.organization_id);
+    if (actionDecisionError) throw actionDecisionError;
 
     const executionId = await createExecution(admin, {
       event_type: "authority_requested",
-      workflow_code: decisionWorkflowCode,
+      workflow_code: targetWorkflowCode,
       request_id: crypto.randomUUID(),
       correlation_id: body.conversation_id || action.id,
       idempotency_key: `${idempotencyKey}:pe02`,
@@ -163,13 +198,18 @@ Deno.serve(async (req: Request) => {
       action_id: action.id,
       input_data: {
         action_type: actionType,
-        target_workflow_code: targetWorkflowByAction[actionType] || body.workflow_code || null,
+        target_workflow_code: targetWorkflowCode,
         payload: body.input_data || {},
       },
     });
 
     if (authority.requires_approval) {
-      await admin.from("actions").update({ status: "pending" }).eq("id", action.id);
+      const { error: pendingActionError } = await admin
+        .from("actions")
+        .update({ status: "pending" })
+        .eq("id", action.id)
+        .eq("organization_id", profile.organization_id);
+      if (pendingActionError) throw pendingActionError;
       await admin.from("workflow_executions").update({
         status: "success",
         decision_id: decision.id,
@@ -244,7 +284,12 @@ Deno.serve(async (req: Request) => {
     }
 
     if (domainOutput) {
-      await admin.from("actions").update({ status: "completed", output_data: domainOutput, completed_at: new Date().toISOString() }).eq("id", action.id);
+      const { error: completedActionError } = await admin
+        .from("actions")
+        .update({ status: "completed", output_data: domainOutput, completed_at: new Date().toISOString() })
+        .eq("id", action.id)
+        .eq("organization_id", profile.organization_id);
+      if (completedActionError) throw completedActionError;
       await admin.from("workflow_executions").update({ status: "success", decision_id: decision.id, output_data: domainOutput, finished_at: new Date().toISOString() }).eq("id", executionId);
       await admin.from("workflow_events").insert({
         organization_id: profile.organization_id,
@@ -262,7 +307,7 @@ Deno.serve(async (req: Request) => {
         organization_id: profile.organization_id,
         action_id: action.id,
         decision_id: decision.id,
-        workflow_code: decisionWorkflowCode,
+        workflow_code: targetWorkflowCode,
         command_type: actionType,
         payload: body.input_data || {},
         idempotency_key: `${idempotencyKey}:command`,
@@ -276,23 +321,38 @@ Deno.serve(async (req: Request) => {
         action_type: actionType,
         command_id: commandId,
         decision_id: decision.id,
-        workflow_code: decisionWorkflowCode,
+        workflow_code: targetWorkflowCode,
         workflow_execution_id: executionId,
-        input_data: { action_type: actionType, target_workflow_code: targetWorkflowByAction[actionType] || body.workflow_code || null, payload: body.input_data || {} },
+        input_data: actionInputData,
       });
       await admin.from("commands").update({ status: "dispatched" }).eq("id", commandId);
-      await admin.from("actions").update({ status: "queued" }).eq("id", action.id);
+      const { error: queuedActionError } = await admin
+        .from("actions")
+        .update({ status: "queued" })
+        .eq("id", action.id)
+        .eq("organization_id", profile.organization_id);
+      if (queuedActionError) throw queuedActionError;
       return Response.json({ action: { ...action, status: "queued" }, 
         workflow_execution_id: executionId, n8n: result }, 
         { status: 202, headers: cors(req) });
     } catch (error) {
       await admin.from("workflow_executions").update({ status: "failed", error_data: { code: error instanceof Error ? error.message : "WORKFLOW_FAILED" }, finished_at: new Date().toISOString() }).eq("id", executionId);
-      await admin.from("actions").update({ status: "failed", error_data: { code: "WORKFLOW_FAILED" }, completed_at: new Date().toISOString() }).eq("id", action.id);
-      return Response.json({ action: { ...action, status: "failed" }, workflow_execution_id: executionId, error: "No se pudo iniciar PE02" }, 
+      await admin
+        .from("actions")
+        .update({ status: "failed", error_data: { code: error instanceof Error ? error.message : "WORKFLOW_FAILED" }, completed_at: new Date().toISOString() })
+        .eq("id", action.id)
+        .eq("organization_id", profile.organization_id);
+      return Response.json({ action: { ...action, status: "failed" }, workflow_execution_id: executionId, error: "No se pudo iniciar el workflow de la acción" },
         { status: 503, headers: cors(req) });
     }
   } catch (error) {
-    const status = error instanceof Error && error.message === "UNAUTHORIZED" ? 401 : 500;
-    return Response.json({ error: status === 401 ? "No autorizado" : "No se pudo crear la acción" }, { status, headers: cors(req) });
+    const errorCode = error instanceof Error ? error.message : "UNKNOWN_ERROR";
+    const status = errorCode === "UNAUTHORIZED" ? 401 : errorCode === "AUTH_SERVICE_UNAVAILABLE" ? 503 : 500;
+    const message = status === 401
+      ? "No autorizado"
+      : status === 503
+        ? "El servicio de autenticación está temporalmente no disponible. Inténtalo de nuevo."
+        : "No se pudo crear la acción";
+    return Response.json({ error: message }, { status, headers: cors(req) });
   }
 });

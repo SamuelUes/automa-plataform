@@ -9,43 +9,111 @@ import { PriorityBadge, CaseStatusBadge } from "@/components/cases/status-badge"
 import { EmptyState } from "@/components/ui/states";
 import { RefreshDashboardButton } from "@/components/dashboard/refresh-dashboard-button";
 
-async function getCurrentUserName() {
+type DashboardContext = {
+  userId: string;
+  organizationId: string;
+  role: string;
+  userName: string;
+};
+
+type WorkflowSummary = { id: string; code: string; name: string; is_active: boolean };
+type RecentActivity = {
+  id: string;
+  time: string;
+  title: string;
+  detail: string;
+  tone: "warning" | "info" | "danger" | "muted";
+};
+
+async function getDashboardContext(): Promise<DashboardContext | null> {
   const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
 
-  if (!user) return "Usuario";
+  if (!user) return null;
 
   const { data: profile } = await (supabase as any)
     .from("users")
-    .select("full_name")
+    .select("full_name,organization_id,role")
     .eq("id", user.id)
     .maybeSingle();
 
-  return profile?.full_name || user.user_metadata?.full_name || user.email?.split("@")[0] || "Usuario";
+  if (!profile?.organization_id) return null;
+
+  return {
+    userId: user.id,
+    organizationId: profile.organization_id,
+    role: profile.role || "viewer",
+    userName: profile.full_name || user.user_metadata?.full_name || user.email?.split("@")[0] || "Usuario",
+  };
 }
 
-async function getCases(): Promise<DemoCase[]> {
-  try {
-    const supabase = await createClient();
-    const { data } = await supabase.from("cases").select("id,case_number,title,description,status,priority,updated_at,created_at,requires_approval,requires_human,contacts(name,company),departments(name)").order("updated_at", { ascending: false }).limit(8);
-    return (data ?? []) as unknown as DemoCase[];
-  } catch { return []; }
+function isIndividualRole(role: string) {
+  return role === "agent";
 }
 
-type WorkflowSummary = { id: string; code: string; name: string; is_active: boolean };
+async function getCases(context: DashboardContext): Promise<DemoCase[]> {
+  const supabase = await createClient();
+  let query = supabase
+    .from("cases")
+    .select("id,case_number,title,description,status,priority,updated_at,created_at,requires_approval,requires_human,contacts(name,company),departments(name)")
+    .eq("organization_id", context.organizationId)
+    .order("updated_at", { ascending: false })
+    .limit(8);
 
-async function getDashboardSummary() {
+  if (isIndividualRole(context.role)) query = query.eq("assigned_to", context.userId);
+
+  const { data } = await query;
+  return (data ?? []) as unknown as DemoCase[];
+}
+
+async function getDashboardSummary(context: DashboardContext) {
   const supabase = await createClient();
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  const [emails, activeCases, approvals, followUps] = await Promise.all([
-    supabase.from("emails").select("id", { count: "exact", head: true }).gte("created_at", today.toISOString()),
-    supabase.from("cases").select("id", { count: "exact", head: true }).not("status", "in", "(resolved,closed,cancelled)"),
-    supabase.from("approvals").select("id", { count: "exact", head: true }).eq("status", "pending"),
-    supabase.from("follow_ups").select("id", { count: "exact", head: true }).neq("status", "completed"),
+  const scope = isIndividualRole(context.role) ? { userId: context.userId } : null;
+
+  const [emails, activeCases, approvals, assignedCases] = await Promise.all([
+    supabase
+      .from("emails")
+      .select("id", { count: "exact", head: true })
+      .eq("organization_id", context.organizationId)
+      .gte("created_at", today.toISOString()),
+    (() => {
+      let query = supabase
+        .from("cases")
+        .select("id", { count: "exact", head: true })
+        .eq("organization_id", context.organizationId)
+        .not("status", "in", "(resolved,closed,cancelled)");
+      if (scope) query = query.eq("assigned_to", scope.userId);
+      return query;
+    })(),
+    (() => {
+      let query = supabase
+        .from("approvals")
+        .select("id", { count: "exact", head: true })
+        .eq("organization_id", context.organizationId)
+        .eq("status", "pending");
+      if (scope) query = query.eq("requested_from", scope.userId);
+      return query;
+    })(),
+    scope
+      ? supabase.from("cases").select("id").eq("organization_id", context.organizationId).eq("assigned_to", scope.userId)
+      : Promise.resolve({ data: null }),
   ]);
+
+  let followUpQuery = supabase
+    .from("follow_ups")
+    .select("id", { count: "exact", head: true })
+    .eq("organization_id", context.organizationId)
+    .neq("status", "completed");
+  if (scope) {
+    const ids = (assignedCases.data || []).map((item: { id: string }) => item.id);
+    followUpQuery = ids.length ? followUpQuery.in("case_id", ids) : followUpQuery.eq("case_id", "00000000-0000-0000-0000-000000000000");
+  }
+  const followUps = await followUpQuery;
+
   return {
     emailsProcessed: emails.count ?? 0,
     activeCases: activeCases.count ?? 0,
@@ -54,11 +122,12 @@ async function getDashboardSummary() {
   };
 }
 
-async function getWorkflowSummaries(): Promise<{ workflows: WorkflowSummary[]; total: number }> {
+async function getWorkflowSummaries(context: DashboardContext): Promise<{ workflows: WorkflowSummary[]; total: number }> {
   const supabase = await createClient();
   const { data, count } = await supabase
     .from("workflow_definitions")
     .select("id,code,name,is_active", { count: "exact" })
+    .eq("organization_id", context.organizationId)
     .order("code");
   return {
     workflows: (data ?? []) as unknown as WorkflowSummary[],
@@ -66,13 +135,42 @@ async function getWorkflowSummaries(): Promise<{ workflows: WorkflowSummary[]; t
   };
 }
 
+async function getRecentActivity(context: DashboardContext): Promise<RecentActivity[]> {
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("audit_logs")
+    .select("id,event_type,entity_type,created_at,case_id,metadata")
+    .eq("organization_id", context.organizationId)
+    .order("created_at", { ascending: false })
+    .limit(4);
+
+  return (data || []).map((event: { id: string; event_type: string; entity_type: string | null; created_at: string; case_id: string | null }) => ({
+    id: event.id,
+    time: new Date(event.created_at).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" }),
+    title: event.event_type.replaceAll("_", " "),
+    detail: event.case_id ? `Caso asociado` : event.entity_type || "Actividad operativa",
+    tone: event.event_type.includes("approval") ? "warning" : event.event_type.includes("error") ? "danger" : "info",
+  }));
+}
+
 export default async function DashboardPage() {
-  const [cases, userName, summary, workflowSummary] = await Promise.all([
-    getCases(),
-    getCurrentUserName(),
-    getDashboardSummary(),
-    getWorkflowSummaries(),
+  const context = await getDashboardContext();
+
+  if (!context) {
+    return null;
+  }
+
+  const [cases, summary, workflowSummary, recentActivity] = await Promise.all([
+    getCases(context),
+    getDashboardSummary(context),
+    context.role === "owner"
+      ? getWorkflowSummaries(context)
+      : Promise.resolve({ workflows: [] as WorkflowSummary[], total: 0 }),
+    context.role === "owner"
+      ? getRecentActivity(context)
+      : Promise.resolve([] as RecentActivity[]),
   ]);
+  const { userName } = context;
   const workflowSummaries = workflowSummary.workflows;
   const attention = cases.filter((c) => ["waiting_approval", "waiting_human", "waiting_verification", "follow_up"].includes(c.status as string)).slice(0, 4);
   return (
@@ -162,63 +260,65 @@ export default async function DashboardPage() {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-[13px] uppercase tracking-wide">Actividad reciente</CardTitle>
-        </CardHeader>
+      {context.role === "owner" ? (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-[13px] uppercase tracking-wide">Actividad reciente</CardTitle>
+          </CardHeader>
 
-        <CardContent>
-          <div className="space-y-4">
-            {[
-              ["09:45", "Aprobación solicitada", "Caso #184", "warning"],
-              ["09:44", "Borrador generado", "PE03 · Reply Orchestrator", "info"],
-              ["09:43", "Agente clasificó como urgente", "Caso #184", "danger"],
-              ["09:42", "Correo recibido", "Mariana López", "muted"],
-            ].map(([time, title, detail, tone]) => (
-              <div key={time} className="flex gap-3">
-                <span className="font-mono text-[10px] text-muted-foreground pt-0.5 w-9">{time}</span>
-                <span
-                  className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${
-                    tone === "warning" ? "bg-warning" : tone === "info" ? "bg-info" : tone === "danger" ? "bg-destructive" : "bg-muted-foreground/40"
-                  }`}
-                />
-                <div className="min-w-0">
-                  <p className="text-xs font-medium">{title}</p>
-                  <p className="text-[11px] text-muted-foreground mt-0.5 break-words">{detail}</p>
+          <CardContent>
+            <div className="space-y-4">
+              {recentActivity.map((activity) => (
+                <div key={activity.id} className="flex gap-3">
+                  <span className="font-mono text-[10px] text-muted-foreground pt-0.5 w-9">{activity.time}</span>
+                  <span
+                    className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${
+                      activity.tone === "warning" ? "bg-warning" : activity.tone === "info" ? "bg-info" : activity.tone === "danger" ? "bg-destructive" : "bg-muted-foreground/40"
+                    }`}
+                  />
+                  <div className="min-w-0">
+                    <p className="text-xs font-medium capitalize">{activity.title}</p>
+                    <p className="text-[11px] text-muted-foreground mt-0.5 break-words">{activity.detail}</p>
+                  </div>
                 </div>
+              ))}
+              {recentActivity.length === 0 ? (
+                <p className="text-xs text-muted-foreground">No hay actividad reciente en tu organización.</p>
+              ) : null}
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
+    </div>
+
+    {context.role === "owner" ? (
+      <Card>
+        <CardHeader className="flex-row items-center justify-between pb-4">
+          <div>
+            <CardTitle className="text-[13px] uppercase tracking-wide">
+              Estado de automatizaciones
+            </CardTitle>
+            <p className="text-xs text-muted-foreground mt-1">{workflowSummary.total} {workflowSummary.total === 1 ? "workflow configurado" : "workflows configurados"} en tu operación.</p>
+          </div>
+          <Link href="/automations" className="text-xs text-muted-foreground hover:text-foreground flex gap-1 items-center">
+            Ver automatizaciones <ChevronRight className="h-3.5 w-3.5" />
+          </Link>
+        </CardHeader>
+        <CardContent>
+          <div className="grid gap-x-8 gap-y-1 sm:grid-cols-2 lg:grid-cols-3">
+            {workflowSummaries.map((workflow) => (
+              <div key={workflow.id} className="flex items-center gap-3 py-2.5 border-b last:border-0">
+                <span className="font-mono text-[10px] text-muted-foreground w-8">{workflow.code}</span>
+                <Workflow className="h-3.5 w-3.5 text-muted-foreground" />
+                <span className="text-xs font-medium flex-1 truncate">{workflow.name}</span>
+                <Badge variant={workflow.is_active ? "success" : "secondary"}>{workflow.is_active ? "Activo" : "Pausado"}</Badge>
               </div>
             ))}
+            {workflowSummaries.length === 0 ? <EmptyState compact title="Sin automatizaciones" description="No hay workflows configurados para esta organización." /> : null}
           </div>
         </CardContent>
       </Card>
-    </div>
-
-    <Card>
-      <CardHeader className="flex-row items-center justify-between pb-4">
-        <div>
-          <CardTitle className="text-[13px] uppercase tracking-wide">
-            Estado de automatizaciones
-          </CardTitle>
-          <p className="text-xs text-muted-foreground mt-1">{workflowSummary.total} {workflowSummary.total === 1 ? "workflow configurado" : "workflows configurados"} en tu operación.</p>
-        </div>
-        <Link href="/automations" className="text-xs text-muted-foreground hover:text-foreground flex gap-1 items-center">
-          Ver automatizaciones <ChevronRight className="h-3.5 w-3.5" />
-        </Link>
-      </CardHeader>
-      <CardContent>
-        <div className="grid gap-x-8 gap-y-1 sm:grid-cols-2 lg:grid-cols-3">
-          {workflowSummaries.map((workflow) => (
-            <div key={workflow.id} className="flex items-center gap-3 py-2.5 border-b last:border-0">
-              <span className="font-mono text-[10px] text-muted-foreground w-8">{workflow.code}</span>
-              <Workflow className="h-3.5 w-3.5 text-muted-foreground" />
-              <span className="text-xs font-medium flex-1 truncate">{workflow.name}</span>
-              <Badge variant={workflow.is_active ? "success" : "secondary"}>{workflow.is_active ? "Activo" : "Pausado"}</Badge>
-            </div>
-          ))}
-          {workflowSummaries.length === 0 ? <EmptyState compact title="Sin automatizaciones" description="No hay workflows configurados para esta organización." /> : null}
-        </div>
-      </CardContent>
-    </Card>
+    ) : null}
     
   </div>
   );
