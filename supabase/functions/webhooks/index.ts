@@ -17,6 +17,11 @@ import {
   persistPendingIntent,
 } from "../_shared/integration.ts";
 import { triggerWorkflow } from "../_shared/n8n/client.ts";
+import {
+  mergeContextSnapshot,
+  normalizeContextRefs,
+  summarizeCallbackOutput,
+} from "../_shared/context-snapshot.ts";
 
 const terminalStatuses = ["success", "failed", "cancelled"];
 
@@ -88,6 +93,28 @@ Deno.serve(async (req: Request) => {
 
     const outputData = body.output_data && typeof body.output_data === "object" ? body.output_data : {};
     const errorData = body.error_data && typeof body.error_data === "object" ? body.error_data : {};
+    const executionInput = execution.input_data?.input_data && typeof execution.input_data.input_data === "object"
+      ? execution.input_data.input_data as Record<string, unknown>
+      : {};
+    const nestedPayload = executionInput.payload && typeof executionInput.payload === "object"
+      ? executionInput.payload as Record<string, unknown>
+      : {};
+    const creationId = typeof executionInput.creation_id === "string"
+      ? executionInput.creation_id
+      : typeof nestedPayload.creation_id === "string"
+        ? nestedPayload.creation_id
+        : null;
+    if (creationId && ["PE03", "CREATOR01"].includes(body.workflow_code)) {
+      const { error: creationError } = await admin.from("creations").update({
+        status: status === "success" ? "completed" : status === "failed" ? "failed" : "running",
+        output_json: outputData,
+        provider: typeof outputData.provider === "string" ? outputData.provider : null,
+        model: typeof outputData.model === "string" ? outputData.model : null,
+        error_data: errorData,
+        completed_at: ["success", "failed", "cancelled"].includes(status) ? new Date().toISOString() : null,
+      }).eq("id", creationId).eq("organization_id", body.organization_id);
+      if (creationError) throw creationError;
+    }
     const contractResult = {
       contract_version: WORKFLOW_RESULT_CONTRACT,
       outcome: workflowOutcome(status, outputData),
@@ -139,10 +166,9 @@ Deno.serve(async (req: Request) => {
     const responseContent = typeof outputData.response === "string" ? outputData.response : null;
     const conversationId = execution.input_data?.conversation_id;
     const requestId = execution.input_data?.request_id || null;
-    const inputData = execution.input_data?.input_data && typeof execution.input_data.input_data === "object"
-      ? execution.input_data.input_data as Record<string, unknown>
-      : {};
-    const inputContent = typeof inputData.content === "string" ? inputData.content : null;
+    const inputData = executionInput;
+    const inputPayload = nestedPayload;
+    const inputContent = typeof (inputData.content || inputPayload.content) === "string" ? String(inputData.content || inputPayload.content) : null;
     const sourceChannel = inputData.source_channel === "whatsapp" || inputData.channel === "whatsapp"
       ? "whatsapp"
       : "dashboard";
@@ -265,6 +291,7 @@ Deno.serve(async (req: Request) => {
         if (failureMessageError) throw failureMessageError;
       }
     }
+    let persistedContext: { id: string; version: number } | null = null;
     if (status === "success" && isConversationResponse && conversationId && inputContent && responseContent) {
       const messageMetadata = {
         workflow_code: body.workflow_code,
@@ -276,32 +303,71 @@ Deno.serve(async (req: Request) => {
       };
       const { data: existingMessages, error: existingMessagesError } = await admin
         .from("messages")
-        .select("id,sender_type")
+        .select("id,sender_type,context_id")
         .eq("conversation_id", conversationId)
         .contains("metadata", { request_id: requestId })
         .limit(1);
       if (existingMessagesError) throw existingMessagesError;
       if (!existingMessages?.length) {
+        const { data: currentContext, error: currentContextError } = await admin
+          .from("context")
+          .select("id,version,content_json")
+          .eq("conversation_id", conversationId)
+          .maybeSingle();
+        if (currentContextError) throw currentContextError;
+
+        const contextRefs = normalizeContextRefs(outputData.context_refs || outputData.source_refs);
+        const coverage = outputData.coverage && typeof outputData.coverage === "object"
+          ? summarizeCallbackOutput(outputData.coverage as Record<string, unknown>)
+          : null;
+        const snapshot = mergeContextSnapshot(currentContext, {
+          conversation_id: conversationId,
+          case_id: execution.case_id || null,
+          request_id: requestId,
+          source_channel: sourceChannel,
+          coverage,
+          source_refs: contextRefs,
+          latest_exchange: {
+            request_id: requestId,
+            workflow_execution_id: execution.id,
+            channel: sourceChannel,
+            input_length: inputContent.length,
+            response_length: responseContent.length,
+          },
+        });
+        const contextPayload = {
+          conversation_id: conversationId,
+          organization_id: body.organization_id,
+          case_id: execution.case_id || null,
+          context_type: execution.case_id ? "case" : "assistant",
+          content_json: snapshot.content_json,
+          version: snapshot.version,
+        };
+        const { data: savedContext, error: contextError } = await admin
+          .from("context")
+          .upsert(currentContext?.id ? { id: currentContext.id, ...contextPayload } : contextPayload, { onConflict: "conversation_id" })
+          .select("id,version")
+          .single();
+        if (contextError) throw contextError;
+        persistedContext = savedContext;
+
         const { error: messageError } = await admin.from("messages").insert([
           {
             conversation_id: conversationId,
             request_id: requestId,
+            context_id: savedContext.id,
             user_id: execution.input_data?.user_id || null,
             sender_type: "human",
             role: "user",
             channel: sourceChannel,
             content: inputContent,
-            content_json: {
-              version: 1,
-              status: "completed",
-              request_id: requestId,
-              content: inputContent,
-            },
+            content_json: { version: 1, status: "completed", request_id: requestId, content: inputContent },
             metadata: { source: sourceChannel, ...messageMetadata },
           },
           {
             conversation_id: conversationId,
             request_id: requestId,
+            context_id: savedContext.id,
             sender_type: "ai",
             role: "assistant",
             channel: sourceChannel,
@@ -311,9 +377,12 @@ Deno.serve(async (req: Request) => {
               status: "completed",
               request_id: requestId,
               response: responseContent,
-              ...outputData,
+              context_id: savedContext.id,
+              context_version: savedContext.version,
+              context_refs: contextRefs,
+              coverage,
             },
-            metadata: { source: "n8n", ...messageMetadata },
+            metadata: { source: "n8n", context_id: savedContext.id, context_version: savedContext.version, ...messageMetadata },
           },
         ]);
         if (messageError) throw messageError;
@@ -324,46 +393,17 @@ Deno.serve(async (req: Request) => {
           .eq("organization_id", body.organization_id)
           .neq("status", "closed");
         if (conversationStatusError) throw conversationStatusError;
-
-        const { data: currentContext, error: currentContextError } = await admin
-          .from("context")
-          .select("id,version,content_json")
-          .eq("conversation_id", conversationId)
-          .maybeSingle();
-        if (currentContextError) throw currentContextError;
-
-        const contextPayload = {
-          conversation_id: conversationId,
-          organization_id: body.organization_id,
-          case_id: execution.case_id || null,
-          context_type: execution.case_id ? "case" : "assistant",
-          content_json: {
-            conversation_id: conversationId,
-            case_id: execution.case_id || null,
-            request_id: requestId,
-            source_channel: sourceChannel,
-            previous: currentContext?.content_json || {},
-            latest_exchange: {
-              channel: sourceChannel,
-              user: { content: inputContent },
-              assistant: { content: responseContent, ...outputData },
-            },
-          },
-          version: (currentContext?.version || 0) + 1,
-        };
-        const { data: savedContext, error: contextError } = await admin
-          .from("context")
-          .upsert(currentContext?.id ? { id: currentContext.id, ...contextPayload } : contextPayload, { onConflict: "conversation_id" })
-          .select("id")
-          .single();
-        if (contextError) throw contextError;
-
-        const { error: linkError } = await admin
-          .from("messages")
-          .update({ context_id: savedContext.id })
-          .eq("conversation_id", conversationId)
-          .eq("request_id", requestId);
-        if (linkError) throw linkError;
+      } else {
+        const existingContextId = existingMessages[0]?.context_id;
+        if (existingContextId) {
+          const { data: existingContext, error: existingContextError } = await admin
+            .from("context")
+            .select("id,version")
+            .eq("id", existingContextId)
+            .maybeSingle();
+          if (existingContextError) throw existingContextError;
+          if (existingContext) persistedContext = existingContext;
+        }
       }
     }
 
@@ -432,16 +472,22 @@ Deno.serve(async (req: Request) => {
       }
     }
 
+    const eventOutputData = body.workflow_code === "PE08"
+      ? summarizeCallbackOutput(outputData)
+      : outputData;
     const { error: eventError } = await admin.from("workflow_events").insert({
       organization_id: body.organization_id,
       workflow_execution_id: execution.id,
       case_id: execution.case_id,
       event_type: `n8n.${body.workflow_code}.${status}`,
       event_data: {
-        ...contractResult,
-        output_data: outputData,
-        error_data: errorData,
+        ...(body.workflow_code === "PE08"
+          ? { ...contractResult, errors: status === "failed" ? [summarizeCallbackOutput(errorData)] : [] }
+          : contractResult),
+        output_data: eventOutputData,
+        error_data: body.workflow_code === "PE08" ? summarizeCallbackOutput(errorData) : errorData,
         n8n_execution_id: body.n8n_execution_id || null,
+        ...(persistedContext ? { context_id: persistedContext.id, context_version: persistedContext.version } : {}),
       },
       idempotency_key: resultKey,
     });
@@ -451,6 +497,7 @@ Deno.serve(async (req: Request) => {
       success: true,
       workflow_execution_id: execution.id,
       result: contractResult,
+      context: persistedContext,
       dispatched,
     }, { headers: cors(req) });
   } catch (error) {
