@@ -1,12 +1,16 @@
 // @ts-expect-error Deno resolves URL imports at Edge Function runtime.
 import { z } from "https://esm.sh/zod@3.25.76";
 
+export { z };
+
 export const actionInputSchema = z.object({
   action_type: z.enum([
     "approve_email",
     "reject_approval",
     "delegate_case",
     "send_email",
+    "create_email_draft",
+    "discard_email_draft",
     "schedule_follow_up",
     "resolve_case",
     "verify_case",
