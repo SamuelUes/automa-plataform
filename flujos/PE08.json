@@ -126,6 +126,23 @@
     },
     {
       "parameters":{
+        "conditions":{
+          "boolean":[
+            {
+              "value1":"={{ ($json._pe08.workflowCalls || []).length > 0 }}",
+              "operation":"isTrue"
+            }
+          ]
+        }
+      },
+      "id":"01080000-0000-4000-8000-000000000009a",
+      "name":"If orchestration workflow calls are present",
+      "type":"n8n-nodes-base.if",
+      "typeVersion":2,
+      "position":[1950,0]
+    },
+    {
+      "parameters":{
         "method":"POST",
         "url":"={{ $env.PROLOGISTICA_EDGE_FUNCTION_URL + '/workflow-bridge' }}",
         "sendHeaders":true,
@@ -242,7 +259,16 @@
       "index":0
     }]]},
     "Validate structured action_requests (max 3)":{"main":[[{
+      "node":"If orchestration workflow calls are present",
+      "type":"main",
+      "index":0
+    }]]},
+    "If orchestration workflow calls are present":{"main":[[{
       "node":"POST orchestration bridge structured workflow_calls",
+      "type":"main",
+      "index":0
+    }],[{
+      "node":"Validate conversational PE08 result",
       "type":"main",
       "index":0
     }]]},
