@@ -3,6 +3,12 @@ declare const Deno: {
   serve(handler: (request: Request) => Response | Promise<Response>): void;
 };
 
+declare global {
+  interface ImportMeta {
+    readonly main?: boolean;
+  }
+}
+
 // @ts-expect-error Deno resolves URL imports at Edge Function runtime.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { cors } from "../_shared/cors.ts";
