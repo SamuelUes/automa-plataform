@@ -52,12 +52,26 @@ Deno.serve(async (req: Request) => {
     if (!serviceKey || !supabaseUrl) throw new Error("SUPABASE_ADMIN_NOT_CONFIGURED");
 
     const admin = createClient(supabaseUrl, serviceKey);
-    const { data: execution, error: executionError } = await admin
+    const executionSelect = "id,case_id,action_id,decision_id,command_id,workflow_code,input_data,parent_workflow_execution_id,orchestration_id,tool_call_id";
+    let { data: execution, error: executionError } = await admin
       .from("workflow_executions")
-      .select("id,case_id,action_id,decision_id,command_id,workflow_code,input_data,parent_workflow_execution_id,orchestration_id,tool_call_id")
+      .select(executionSelect)
       .eq("id", body.workflow_execution_id)
       .maybeSingle();
 
+    if (executionError) throw executionError;
+    if (!execution && body.request_id) {
+      const fallback = await admin
+        .from("workflow_executions")
+        .select(executionSelect)
+        .eq("request_id", body.request_id)
+        .eq("workflow_code", body.workflow_code)
+        .order("started_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      execution = fallback.data;
+      executionError = fallback.error;
+    }
     if (executionError) throw executionError;
     const executionOrganizationId = execution?.input_data?.organization_id;
     if (!execution || execution.workflow_code !== body.workflow_code || executionOrganizationId !== body.organization_id) {
