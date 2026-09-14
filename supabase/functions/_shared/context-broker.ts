@@ -47,7 +47,7 @@ const emailThreadParameters = z.object({
   thread_id: uuid.optional(),
   limit: boundedLimit,
   cursor,
-}).strict().refine((value) => value.email_id !== undefined || value.thread_id !== undefined, {
+}).strict().refine((value: { email_id?: string; thread_id?: string }) => value.email_id !== undefined || value.thread_id !== undefined, {
   message: "email_id or thread_id is required",
 });
 
