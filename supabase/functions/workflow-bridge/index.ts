@@ -4,6 +4,84 @@ import { cors } from "../_shared/cors.ts";
 import { adminClient, createExecution, recordAssistantProgress } from "../_shared/integration.ts";
 import { triggerWorkflow } from "../_shared/n8n/client.ts";
 
+const orchestrationWorkflowCodes = new Set([
+  "PE01", "PE02", "PE03", "PE04", "PE05", "PE06", "PE07",
+  "PE09", "PE10", "PE11", "PE12",
+]);
+
+export type OrchestrationCall = {
+  workflow_code: string;
+  input_data: Record<string, unknown>;
+  tool_call_id?: string | null;
+  action_type?: string | null;
+  [key: string]: unknown;
+};
+
+export function normalizeOrchestrationCalls(value: unknown): OrchestrationCall[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error("WORKFLOW_CALLS_REQUIRED");
+  }
+
+  return value.map((call, index) => {
+    if (!call || typeof call !== "object" || Array.isArray(call)) {
+      throw new Error(`MALFORMED_WORKFLOW_CALL_${index + 1}`);
+    }
+
+    const candidate = call as Record<string, unknown>;
+    if (typeof candidate.workflow_code !== "string" || !orchestrationWorkflowCodes.has(candidate.workflow_code)) {
+      throw new Error(`UNAUTHORIZED_WORKFLOW_CALL_${index + 1}`);
+    }
+
+    const inputData = candidate.input_data;
+    if (!inputData || typeof inputData !== "object" || Array.isArray(inputData) || Object.keys(inputData).length === 0) {
+      throw new Error(`MALFORMED_WORKFLOW_INPUT_${index + 1}`);
+    }
+    if (candidate.tool_call_id !== undefined && candidate.tool_call_id !== null && typeof candidate.tool_call_id !== "string") {
+      throw new Error(`MALFORMED_WORKFLOW_CALL_${index + 1}`);
+    }
+    if (candidate.action_type !== undefined && candidate.action_type !== null && typeof candidate.action_type !== "string") {
+      throw new Error(`MALFORMED_WORKFLOW_CALL_${index + 1}`);
+    }
+
+    return {
+      ...candidate,
+      workflow_code: candidate.workflow_code,
+      input_data: { ...(inputData as Record<string, unknown>) },
+      tool_call_id: candidate.tool_call_id as string | null | undefined,
+      action_type: candidate.action_type as string | null | undefined,
+    };
+  });
+}
+
+const pe08WorkflowByAction: Record<string, string> = {
+  create_email_draft: "PE03",
+  approve_email: "PE07",
+  reject_approval: "PE07",
+  send_email: "PE07",
+  delegate_case: "PE04",
+  schedule_follow_up: "PE06",
+  verify_case: "PE12",
+  resolve_case: "PE12",
+  close_case: "PE12",
+};
+
+export function normalizePe08ActionRequest(value: unknown): OrchestrationCall {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("MALFORMED_ACTION_REQUEST");
+  }
+  const action = value as Record<string, unknown>;
+  const workflowCode = typeof action.action_type === "string" ? pe08WorkflowByAction[action.action_type] : undefined;
+  if (!workflowCode || !action.input_data || typeof action.input_data !== "object" || Array.isArray(action.input_data) || Object.keys(action.input_data).length === 0) {
+    throw new Error("ACTION_NOT_ALLOWED");
+  }
+  return normalizeOrchestrationCalls([{
+    workflow_code: workflowCode,
+    input_data: action.input_data,
+    tool_call_id: typeof action.tool_call_id === "string" ? action.tool_call_id : null,
+    action_type: action.action_type,
+  }])[0];
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors(req) });
   const secret = Deno.env.get("N8N_INGRESS_SECRET");
@@ -16,7 +94,6 @@ Deno.serve(async (req: Request) => {
   try {
     const body = await req.json();
     if (body.operation === "dispatch_orchestration") {
-      const allowed = new Set(["PE01", "PE02", "PE03", "PE04", "PE05", "PE06", "PE07", "PE09", "PE10", "PE11", "PE12"]);
       const calls = Array.isArray(body.workflow_calls) ? body.workflow_calls : [];
       const parentRequestId = body.request_id || body.parent_workflow_execution_id;
       if (!body.organization_id ||
@@ -25,6 +102,13 @@ Deno.serve(async (req: Request) => {
          !parentRequestId || 
          !calls.length) {
         return Response.json({ error: "Despacho de orquestación incompleto" }, 
+          { status: 422, headers: cors(req) });
+      }
+      let normalizedCalls: OrchestrationCall[];
+      try {
+        normalizedCalls = normalizeOrchestrationCalls(calls);
+      } catch (error) {
+        return Response.json({ error: error instanceof Error ? error.message : "WORKFLOW_CALLS_INVALID" },
           { status: 422, headers: cors(req) });
       }
       const admin = adminClient();
@@ -52,8 +136,7 @@ Deno.serve(async (req: Request) => {
       });
       const dispatched = [];
       const errors = [];
-      for (const call of calls) {
-        if (!call || !allowed.has(call.workflow_code)) continue;
+      for (const call of normalizedCalls) {
         await recordAssistantProgress(admin, {
           organization_id: body.organization_id,
           conversation_id: body.conversation_id,
