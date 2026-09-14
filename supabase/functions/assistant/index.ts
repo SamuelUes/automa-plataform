@@ -11,6 +11,62 @@ function conversationTitle(content: string) {
   return normalized.length > 56 ? `${normalized.slice(0, 53).trimEnd()}...` : normalized;
 }
 
+export type AssistantEnvelopeInput = {
+  content: string;
+  organizationId: string;
+  userId: string;
+  conversationId: string;
+  caseId?: string | null;
+  requestId: string;
+  activity: {
+    timer_id: string;
+    generation: number;
+    deadline: string;
+    last_activity_at: string;
+  };
+};
+
+export function buildAssistantEnvelope({
+  content,
+  organizationId,
+  userId,
+  conversationId,
+  caseId = null,
+  requestId,
+  activity,
+}: AssistantEnvelopeInput) {
+  return {
+    event_type: "assistant_command",
+    workflow_code: "PE08",
+    request_id: requestId,
+    correlation_id: conversationId,
+    idempotency_key: `assistant-command:${conversationId}:${requestId}`,
+    organization_id: organizationId,
+    user_id: userId,
+    case_id: caseId,
+    conversation_id: conversationId,
+    source_message_id: null,
+    input_data: {
+      source_channel: "dashboard",
+      content,
+      context_url: conversationContextUrl(),
+      context_contract_version: "conversation-context.v2",
+      context_request: {
+        operation: "get_context_snapshot",
+        organization_id: organizationId,
+        conversation_id: conversationId,
+        case_id: caseId,
+        request_id: requestId,
+        parameters: {},
+      },
+      inactivity_timer_id: activity.timer_id,
+      inactivity_generation: activity.generation,
+      inactivity_deadline_at: activity.deadline,
+      last_activity_at: activity.last_activity_at,
+    },
+  };
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors(req) });
 
@@ -57,28 +113,20 @@ Deno.serve(async (req: Request) => {
       timer_minutes: 2,
     });
     const requestId = crypto.randomUUID();
-    const envelope = {
-      event_type: "assistant_command",
-      workflow_code: "PE08",
-      request_id: requestId,
-      correlation_id: conversationId,
-      idempotency_key: `assistant-command:${conversationId}:${requestId}`,
-      organization_id: profile.organization_id,
-      user_id: user.id,
-      case_id: caseId || null,
-      conversation_id: conversationId,
-      source_message_id: null,
-      input_data: { 
-        source_channel: "dashboard", 
-        content, 
-        context_url: conversationContextUrl(), 
-        inactivity_timer_id: activity.timer_id, 
-        inactivity_generation: activity.generation, 
-        inactivity_deadline_at: activity.deadline, 
-        last_activity_at: activity.conversation.last_activity_at, 
-        context_request: { conversation_id: conversationId, organization_id: profile.organization_id } 
+    const envelope = buildAssistantEnvelope({
+      content,
+      organizationId: profile.organization_id,
+      userId: user.id,
+      conversationId,
+      caseId: caseId || null,
+      requestId,
+      activity: {
+        timer_id: activity.timer_id,
+        generation: activity.generation,
+        deadline: activity.deadline,
+        last_activity_at: activity.conversation.last_activity_at,
       },
-    };
+    });
     const executionId = await createExecution(admin, envelope);
     await recordAssistantProgress(admin, {
       organization_id: profile.organization_id,
