@@ -1,5 +1,13 @@
 import type { PriorityLevel } from "@/types/database";
 
+export type EmailDraftSummary = {
+  id: string;
+  subject: string | null;
+  body: string;
+  status: string;
+  createdAt: string;
+};
+
 export type DemoEmail = { 
   id: string; 
   caseId?: string; 
@@ -14,7 +22,8 @@ export type DemoEmail = {
   direction: "inbound" | "outbound"; 
   requiresApproval: boolean; 
   body: string; 
-  bodyHtml?: string 
+  bodyHtml?: string;
+  draft?: EmailDraftSummary;
 };
 
 export const demoEmails: DemoEmail[] = [

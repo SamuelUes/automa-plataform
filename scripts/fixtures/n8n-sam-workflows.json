@@ -16,6 +16,13 @@
       "expected": ["outlook_read", "anthropic_extract", "supabase_persist", "callback"]
     },
     {
+      "code": "CREATOR01",
+      "workflowId": "4Z0FoaPgY8fo7SYo",
+      "trigger": "flujo creador · Webhook",
+      "mode": "contract-only",
+      "expected": ["request_validation", "email_draft_delegation"]
+    },
+    {
       "code": "PE03",
       "workflowId": "FiN86kVzphFQeFP8",
       "trigger": "PE03 Reply Webhook",
@@ -40,10 +47,30 @@
     {
       "code": "PE08",
       "workflowId": "BuFaP3nCOrFNV0Wt",
-      "trigger": "PE08 Assistant Webhook",
+      "trigger": "Webhook Trigger",
       "mode": "contract-only",
-      "expected": ["channel_normalization", "conversation_scope", "context_lookup", "anthropic_sonnet_response", "whatsapp_response_delivery", "single_callback_persistence"],
-      "forbiddenNodes": ["IF · WhatsApp check or assistant", "Supabase · Check WhatsApp replies", "Supabase · Save PE08 assistant response", "Supabase · Save PE08 user message"]
+      "expected": [
+        "Validate conversational PE08 envelope",
+        "POST conversation-context get_context_snapshot",
+        "Normalize context and expose bounded tool definitions",
+        "Invoke configured AI/orchestrator model",
+        "Validate bounded tool calls (max 5)",
+        "POST conversation-context bounded tool call",
+        "Validate structured action_requests (max 3)",
+        "If orchestration workflow calls are present",
+        "POST orchestration bridge structured workflow_calls",
+        "Validate conversational PE08 result",
+        "POST callback to webhooks"
+      ],
+      "forbiddenNodes": [
+        "Fetch injected local command",
+        "Call C05 routeWhatsAppCommand",
+        "LOCAL MOCK / CORE",
+        "IF · WhatsApp check or assistant",
+        "Supabase · Check WhatsApp replies",
+        "Supabase · Save PE08 assistant response",
+        "Supabase · Save PE08 user message"
+      ]
     },
     {
       "code": "PE10",

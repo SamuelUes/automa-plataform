@@ -82,7 +82,10 @@ flujos/
 # !supabase/migrations/*.sql
 
 superpowers/
-docs/
+#docs/
 flujos/PULSO-LIVE-analisis-y-migracion-supabase.md
 scripts/verify-n8n-sam-workflows.mjs
 .vercel
+docs/mmm.md
+docs/platform-product-implementation-plan.md
+docs/responsive-dashboard-implementation-plan.md

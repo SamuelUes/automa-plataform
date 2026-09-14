@@ -6,7 +6,7 @@ import { triggerWorkflow } from "../_shared/n8n/client.ts";
 
 const orchestrationWorkflowCodes = new Set([
   "PE01", "PE02", "PE03", "PE04", "PE05", "PE06", "PE07",
-  "PE09", "PE10", "PE11", "PE12",
+  "PE09", "PE10", "PE11", "PE12", "CREATOR01",
 ]);
 
 export type OrchestrationCall = {

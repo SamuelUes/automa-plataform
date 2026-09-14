@@ -5,6 +5,8 @@ export type ActionType =
   | "reject_approval"
   | "delegate_case"
   | "send_email"
+  | "create_email_draft"
+  | "discard_email_draft"
   | "schedule_follow_up"
   | "resolve_case"
   | "verify_case"

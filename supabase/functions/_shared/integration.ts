@@ -232,7 +232,7 @@ export function workflowExternalEffects(workflowCode: string, outputData: Record
   if (["PE01", "PE05", "PE08", "PE13"].includes(workflowCode)) effects.push("supabase_write");
   if (["PE01", "PE05", "PE07", "PE10"].includes(workflowCode)) effects.push("outlook_access");
   if (workflowCode === "PE07") effects.push("delivery_attempt");
-  if (["PE02", "PE03", "PE08"].includes(workflowCode)) effects.push("ai_processing");
+  if (["PE02", "PE03", "PE08", "CREATOR01"].includes(workflowCode)) effects.push("ai_processing");
   if (outputData.external_id || outputData.message_id) effects.push("external_reference");
   return effects;
 }

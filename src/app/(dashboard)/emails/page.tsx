@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { RealtimePostgresChangesPayload } from "@supabase/supabase-js";
-import { demoEmails, type DemoEmail } from "@/lib/email-demo-data";
+import { demoEmails, type DemoEmail, type EmailDraftSummary } from "@/lib/email-demo-data";
 import { formatRelativeTime } from "@/lib/utils";
 import { createAction, getOperationError } from "@/lib/actions";
 import { isDemoId } from "@/components/dashboard/action-feedback";
@@ -19,8 +19,9 @@ import { Input } from "@/components/ui/input";
 import { EmptyState } from "@/components/ui/states";
 import { PriorityBadge } from "@/components/cases/status-badge";
 import { ActionCenter } from "@/components/dashboard/action-center";
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { useRealtimeTable } from "@/lib/supabase/realtime";
-import { Archive, ArrowUpRight, BriefcaseBusiness, ChevronLeft, Code2, FileCheck2, Inbox, Mail, MoreHorizontal, Paperclip, RefreshCw, Reply, Search, SlidersHorizontal, Star } from "lucide-react";
+import { Archive, ArrowUpRight, BriefcaseBusiness, ChevronLeft, Code2, FileCheck2, Inbox, Mail, MoreHorizontal, Paperclip, RefreshCw, Reply, Search, SlidersHorizontal, Sparkles, Star } from "lucide-react";
 
 const demoMode = process.env.NEXT_PUBLIC_DEMO_MODE === "true";
 
@@ -32,6 +33,22 @@ function parseJsonValue<T>(value: unknown, fallback: T): T {
   } catch {
     return fallback;
   }
+}
+
+function sanitizeEmailHtml(html: string) {
+  if (typeof DOMParser === "undefined") return "";
+  const document = new DOMParser().parseFromString(html, "text/html");
+  document.querySelectorAll("script, iframe, object, embed, form, meta, link, style").forEach((element) => element.remove());
+  document.querySelectorAll("*").forEach((element) => {
+    Array.from(element.attributes).forEach((attribute) => {
+      const name = attribute.name.toLowerCase();
+      const value = attribute.value.trim();
+      if (name.startsWith("on") || ((name === "href" || name === "src") && /^(javascript|data):/i.test(value))) {
+        element.removeAttribute(attribute.name);
+      }
+    });
+  });
+  return document.body.innerHTML;
 }
 
 function formatEmailBody(body: string) {
@@ -72,6 +89,7 @@ function formatEmailBody(body: string) {
 export default function EmailsPage() {
   const router = useRouter();
   const [emails, setEmails] = useState<DemoEmail[]>(demoMode ? demoEmails : []);
+  const [emailDrafts, setEmailDrafts] = useState<Record<string, EmailDraftSummary>>({});
   const [selectedId, setSelectedId] = useState(demoMode ? demoEmails[0].id : "");
   const [mobilePanel, setMobilePanel] = useState<"inbox" | "detail">("inbox");
   const [filter, setFilter] = useState("all");
@@ -80,6 +98,10 @@ export default function EmailsPage() {
   const [actionCenterOpen, setActionCenterOpen] = useState(false);
   const [composeMode, setComposeMode] = useState<"new" | "reply" | "forward">("new");
   const [sending, setSending] = useState(false);
+  const [creatingDraft, setCreatingDraft] = useState(false);
+  const [discardingDraft, setDiscardingDraft] = useState(false);
+  const [usingDraft, setUsingDraft] = useState(false);
+  const [draftOpen, setDraftOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [showRawBody, setShowRawBody] = useState(false);
   const waitingForSyncRef = useRef(false);
@@ -87,7 +109,8 @@ export default function EmailsPage() {
   const syncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadEmails = useCallback(async (): Promise<DemoEmail[]> => {
-    const { data, error } = await (createClient() as any)
+    const client = createClient() as any;
+    const { data, error } = await client
       .from("emails")
       .select("id,subject,body_text,body_html,direction,evaluation,sender,received_at,case_id,metadata")
       .order("created_at", { ascending: false })
@@ -95,8 +118,31 @@ export default function EmailsPage() {
     if (error) throw error;
     if (!data?.length) {
       setEmails([]);
+      setEmailDrafts({});
       return [];
     }
+
+    const { data: drafts, error: draftsError } = await client
+      .from("email_drafts")
+      .select("id,email_id,subject,body,status,created_at")
+      .in("email_id", data.map((email: { id: string }) => email.id))
+      .in("status", ["draft", "pending_review", "approved"])
+      .order("created_at", { ascending: false });
+    if (draftsError) throw draftsError;
+
+    const latestDrafts = (drafts || []).reduce((result: Record<string, EmailDraftSummary>, draft: { id: string; email_id: string | null; subject: string | null; body: string; status: string; created_at: string }) => {
+      if (draft.email_id && !result[draft.email_id]) {
+        result[draft.email_id] = {
+          id: draft.id,
+          subject: draft.subject,
+          body: draft.body,
+          status: draft.status,
+          createdAt: draft.created_at,
+        };
+      }
+      return result;
+    }, {});
+    setEmailDrafts(latestDrafts);
 
     const mappedEmails = data.map((email: {
       id: string;
@@ -128,6 +174,7 @@ export default function EmailsPage() {
         requiresApproval: Boolean(metadata.requires_approval),
         body: email.body_text || "",
         bodyHtml: email.body_html || undefined,
+        draft: latestDrafts[email.id],
       } as DemoEmail;
     });
     setEmails(mappedEmails);
@@ -160,6 +207,12 @@ export default function EmailsPage() {
 
   useRealtimeTable("emails", handleEmailRealtimeChange);
 
+  const handleDraftRealtimeChange = useCallback(() => {
+    if (!demoMode) void loadEmails().catch((error) => toast.error(getOperationError(error)));
+  }, [loadEmails]);
+
+  useRealtimeTable("email_drafts", handleDraftRealtimeChange);
+
   useEffect(() => () => {
     waitingForSyncRef.current = false;
     if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
@@ -185,6 +238,46 @@ export default function EmailsPage() {
       syncTimeoutRef.current = null;
       setRefreshing(false);
       toast.error(getOperationError(error));
+    }
+  }
+
+  async function createEmailDraft() {
+    if (!selected || creatingDraft) return;
+    if (isDemoId(selected.id)) {
+      toast.info("Los correos simulados no generan borradores en Supabase.");
+      return;
+    }
+
+    setCreatingDraft(true);
+    try {
+      await createAction("create_email_draft", {
+        case_id: selected.caseId || null,
+        input_data: { email_id: selected.id },
+        idempotency_key: `email-draft:${selected.id}:${crypto.randomUUID()}`,
+      });
+      toast.success("Solicitud de borrador enviada. Aparecerá aquí cuando termine.");
+    } catch (error) {
+      toast.error(getOperationError(error));
+    } finally {
+      setCreatingDraft(false);
+    }
+  }
+
+  async function discardEmailDraft() {
+    if (!selected || !selectedDraft || discardingDraft) return;
+    setDiscardingDraft(true);
+    try {
+      await createAction("discard_email_draft", {
+        input_data: { draft_id: selectedDraft.id, email_id: selected.id },
+        idempotency_key: `discard-email-draft:${selectedDraft.id}`,
+      });
+      setDraftOpen(false);
+      toast.success("Borrador descartado.");
+      await loadEmails();
+    } catch (error) {
+      toast.error(getOperationError(error));
+    } finally {
+      setDiscardingDraft(false);
     }
   }
 
@@ -215,6 +308,8 @@ export default function EmailsPage() {
   || filter === email.priority)), [emails, filter, search]);
 
   const selected = visible.find((email) => email.id === selectedId) || visible[0] || emails[0];
+  const selectedDraft = selected ? emailDrafts[selected.id] : undefined;
+  const selectedBodyHtml = useMemo(() => selected?.bodyHtml ? sanitizeEmailHtml(selected.bodyHtml) : "", [selected?.bodyHtml]);
   
   return (
   <>
@@ -224,8 +319,8 @@ export default function EmailsPage() {
     title="Acciones del correo"
     description={selected ? `${selected.subject || "Sin asunto"}. Elige una acción.` : "Selecciona un correo para continuar."}
     actions={selected ? [
-      { id: "reply", label: "Responder", description: "Prepara una respuesta dirigida al remitente.", workflow: "PE07", icon: <Reply className="h-4 w-4" />, onSelect: () => { setActionCenterOpen(false); setComposeMode("reply"); setComposeOpen(true); } },
-      { id: "forward", label: "Reenviar", description: "Prepara una copia del mensaje para otro destinatario.", workflow: "PE07", icon: <ArrowUpRight className="h-4 w-4" />, onSelect: () => { setActionCenterOpen(false); setComposeMode("forward"); setComposeOpen(true); } },
+      { id: "reply", label: "Responder", description: "Prepara una respuesta dirigida al remitente.", workflow: "PE07", icon: <Reply className="h-4 w-4" />, onSelect: () => { setActionCenterOpen(false); setUsingDraft(false); setComposeMode("reply"); setComposeOpen(true); } },
+      { id: "forward", label: "Reenviar", description: "Prepara una copia del mensaje para otro destinatario.", workflow: "PE07", icon: <ArrowUpRight className="h-4 w-4" />, onSelect: () => { setActionCenterOpen(false); setUsingDraft(false); setComposeMode("forward"); setComposeOpen(true); } },
       { id: "case", label: "Abrir caso relacionado", description: "Navega al caso asociado al correo.", icon: <BriefcaseBusiness className="h-4 w-4" />, disabled: !selected.caseId, onSelect: () => { if (selected.caseId) router.push(`/cases/${selected.caseId}`); setActionCenterOpen(false); } },
       { id: "copy-subject", label: "Copiar asunto", description: "Copia el asunto para usarlo en otra acción.", icon: <FileCheck2 className="h-4 w-4" />, onSelect: () => { void navigator.clipboard?.writeText(selected.subject || "Sin asunto"); setActionCenterOpen(false); toast.success("Asunto copiado."); } },
     ] : []}
@@ -234,16 +329,50 @@ export default function EmailsPage() {
     <OperationDialogContent>
       <OperationDialogHeader>
         <OperationDialogTitle>{composeMode === "reply" ? "Responder correo" : composeMode === "forward" ? "Reenviar correo" : "Redactar correo"}</OperationDialogTitle>
-        <OperationDialogDescription>Envía una respuesta desde el centro de operaciones.</OperationDialogDescription>
+        <OperationDialogDescription>
+          Envía una respuesta desde el centro de operaciones.
+        </OperationDialogDescription>
       </OperationDialogHeader>
-      <EmailComposeForm 
-        initial={composeMode === "reply" ? { to: selected?.email, subject: selected?.subject ? `Re: ${selected.subject}` : "", body: "" } : composeMode === "forward" ? { subject: selected?.subject ? `Fwd: ${selected.subject}` : "", body: selected?.body } : undefined} 
+      <EmailComposeForm
+        key={`${selected?.id || "email"}:${composeMode}:${usingDraft ? selectedDraft?.id || "draft" : "empty"}`}
+        initial={composeMode === "reply" ? { to: selected?.email, subject: selectedDraft?.subject || (selected?.subject ? `Re: ${selected.subject}` : ""), body: usingDraft ? selectedDraft?.body || "" : "" } : composeMode === "forward" ? { subject: selected?.subject ? `Fwd: ${selected.subject}` : "", body: selected?.body } : undefined}
         onSubmit={sendEmail} 
-        onCancel={() => setComposeOpen(false)} 
+        onCancel={() => { setUsingDraft(false); setComposeOpen(false); }}
         submitting={sending} 
       />
     </OperationDialogContent>
   </OperationDialog>
+  <Sheet open={draftOpen} onOpenChange={setDraftOpen}>
+    <SheetContent className="w-[calc(100%-1rem)] max-w-md overflow-y-auto border-l p-5 sm:p-7">
+      {selectedDraft && (
+        <div className="flex min-h-full flex-col gap-6 pr-1">
+          <div className="border-b pb-5">
+            <div className="flex items-center gap-2">
+              <Sparkles className="text-muted-foreground" />
+              <p className="font-mono text-[10px] uppercase tracking-[.16em] text-muted-foreground">
+                Borrador generado
+              </p>
+              <Badge className="ml-auto" variant={selectedDraft.status === "draft" ? "secondary" : "warning"}>{selectedDraft.status}</Badge>
+            </div>
+            <SheetTitle className="mt-4 pr-6 text-xl tracking-tight">{selectedDraft.subject || `Re: ${selected.subject}`}</SheetTitle>
+            <p className="mt-2 text-xs text-muted-foreground">Generado con el contexto autorizado de este correo.</p>
+          </div>
+          <div className="whitespace-pre-wrap text-sm leading-7 text-foreground">{selectedDraft.body}</div>
+          <div className="mt-auto grid gap-2 border-t pt-5 sm:grid-cols-2">
+            <Button
+              type="button"
+              onClick={() => { setUsingDraft(true); setDraftOpen(false); setComposeMode("reply"); setComposeOpen(true); }}
+            >
+              <Reply />Utilizar borrador
+            </Button>
+            <Button type="button" variant="outline" onClick={() => void discardEmailDraft()} disabled={discardingDraft}>
+              {discardingDraft ? "Descartando…" : "Descartar borrador"}
+            </Button>
+          </div>
+        </div>
+      )}
+    </SheetContent>
+  </Sheet>
   <div className="space-y-7">
     <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
       <div>
@@ -258,7 +387,7 @@ export default function EmailsPage() {
           <RefreshCw className={refreshing ? "animate-spin" : undefined} />
           {refreshing ? "Esperando correos…" : "Buscar correos nuevos"}
         </Button>
-        <Button onClick={() => { setComposeMode("new"); setComposeOpen(true); }}>
+        <Button onClick={() => { setUsingDraft(false); setComposeMode("new"); setComposeOpen(true); }}>
           <Mail />Redactar correo
         </Button>
       </div>
@@ -282,9 +411,9 @@ export default function EmailsPage() {
       </div>
     </div>
             
-      <Card className="overflow-hidden min-h-[calc(100vh-120px)]">
+      <Card className="overflow-hidden">
       <div className="grid min-w-0 grid-cols-1 divide-x md:grid-cols-[minmax(260px,300px)_minmax(0,1fr)]">
-        <div className={`min-w-0 overflow-y-auto scrollbar-thin md:block md:h-[calc(100vh-120px)] ${mobilePanel === "inbox" ? "block" : "hidden"}`}>
+        <div className={`min-w-0 md:block ${mobilePanel === "inbox" ? "block" : "hidden"}`}>
           <div className="h-12 px-4 border-b flex items-center justify-between">
             <span className="text-xs font-semibold">Bandeja de entrada</span>
             <span className="text-[11px] text-muted-foreground">{visible.length} mensajes</span>
@@ -303,7 +432,7 @@ export default function EmailsPage() {
                   <FileCheck2 className="h-3 w-3 mr-1" />Aprobación</Badge>}</button>)}
                 {visible.length === 0 ? <EmptyState compact title="Sin correos" description="No hay mensajes que coincidan con los filtros seleccionados." /> : null}
               </div>{selected && (
-                <div className={`min-w-0 overflow-y-auto scrollbar-thin md:block md:h-162.5 ${mobilePanel === "detail" ? "block" : "hidden"}`}>
+                <div className={`min-w-0 md:block ${mobilePanel === "detail" ? "block" : "hidden"}`}>
                   <div className="flex min-h-12 items-center justify-between gap-2 border-b px-3 sm:px-5">
                     <div className="flex min-w-0 items-center gap-2">
                       <Button variant="ghost" size="sm" className="shrink-0 md:hidden" onClick={() => setMobilePanel("inbox")}>
@@ -326,7 +455,20 @@ export default function EmailsPage() {
                     </div>
                   </div>
                   <div className="min-w-0 p-5 sm:p-8">
-                    <div className="flex min-w-0 items-start justify-between gap-4">
+
+                    <div className="flex items-center gap-3 pb-6 border-b">
+                      <div className="h-9 w-9 rounded-full bg-[#e4e0d8] text-[#625b4c] flex items-center justify-center text-xs font-semibold">
+                        {selected.sender.split(" ").map((n) => n[0]).join("").slice(0,2)}
+                      </div>
+                      <div>
+                        <p className="text-xs font-medium">{selected.sender}</p>
+                        <p className="text-[11px] text-muted-foreground">{selected.email}</p>
+                      </div>
+                      <span className="ml-auto text-[11px] text-muted-foreground">Para tu cuenta</span>
+                    </div>
+
+
+                    <div className="flex min-w-0 items-start mt-3 justify-between gap-4">
                       <div>
                         <div className="flex items-center gap-2 mb-3">
                           <PriorityBadge priority={selected.priority} />
@@ -335,14 +477,6 @@ export default function EmailsPage() {
                         <h2 className="text-xl font-semibold tracking-tight">{selected.subject}</h2>
                       </div>
                       <Star className="h-4 w-4 text-muted-foreground" />
-                    </div>
-                    <div className="mt-7 flex items-center gap-3 pb-6 border-b">
-                      <div className="h-9 w-9 rounded-full bg-[#e4e0d8] text-[#625b4c] flex items-center justify-center text-xs font-semibold">{selected.sender.split(" ").map((n) => n[0]).join("").slice(0,2)}</div>
-                      <div>
-                        <p className="text-xs font-medium">{selected.sender}</p>
-                        <p className="text-[11px] text-muted-foreground">{selected.email}</p>
-                      </div>
-                      <span className="ml-auto text-[11px] text-muted-foreground">Para tu cuenta</span>
                     </div>
                     <div className="max-w-3xl py-7">
                       {selected.bodyHtml && (
@@ -358,25 +492,39 @@ export default function EmailsPage() {
                           </Button>
                         </div>
                       )}
-                      {selected.bodyHtml && !showRawBody ? (
-                        <iframe
-                          title={`Contenido de ${selected.subject}`}
-                          srcDoc={selected.bodyHtml}
-                          sandbox=""
-                          className="min-h-[520px] w-full rounded-md border bg-background"
+                      {selectedBodyHtml && !showRawBody ? (
+                        <div
+                          aria-label={`Contenido de ${selected.subject}`}
+                          className="email-html-content w-full overflow-visible rounded-md border bg-background p-4 text-sm leading-6 break-words [&_a]:break-words [&_img]:h-auto [&_img]:max-w-full [&_table]:max-w-full"
+                          dangerouslySetInnerHTML={{ __html: selectedBodyHtml }}
                         />
                       ) : (
                         <div className="rounded-md border bg-muted/20 p-4 text-sm leading-7 whitespace-pre-wrap break-words">{formatEmailBody(selected.body)}</div>
                       )}
                     </div>
                     <div className="flex flex-wrap gap-2 border-t pt-5">
-                      <Button className="w-full sm:w-fit" onClick={() => { setComposeMode("reply"); setComposeOpen(true); }}><Reply />
+                      <Button className="w-full sm:w-fit" onClick={() => void createEmailDraft()} disabled={creatingDraft}>
+                        <Sparkles />{creatingDraft ? "Creando borrador…" : selectedDraft ? "Actualizar borrador" : "Crear borrador"}
+                      </Button>
+                      {selectedDraft && (
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          className="w-full border border-zinc-300 bg-gradient-to-br from-white via-purple-200 to-zinc-600 text-zinc-900 shadow-sm hover:from-white hover:via-purple-300 hover:to-zinc-600 sm:w-fit"
+                          onClick={() => setDraftOpen(true)}
+                          aria-label="Abrir borrador generado"
+                        >
+                          <Sparkles />
+                          Ver borrador
+                        </Button>
+                      )}
+                      <Button variant="outline" onClick={() => { setUsingDraft(false); setComposeMode("reply"); setComposeOpen(true); }}><Reply />
                         Responder
                       </Button>
                       <Button variant="outline" type="button" disabled title="Adjuntos aún no están configurados"><Paperclip />
                         Adjuntar
                       </Button>
-                      <Button variant="outline" onClick={() => { setComposeMode("forward"); setComposeOpen(true); }}>
+                      <Button variant="outline" onClick={() => { setUsingDraft(false); setComposeMode("forward"); setComposeOpen(true); }}>
                         Reenviar
                       </Button>
                     </div>

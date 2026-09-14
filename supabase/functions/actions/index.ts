@@ -11,6 +11,7 @@ const targetWorkflowByAction: Record<string, string> = {
   reject_approval: "PE07",
   delegate_case: "PE04",
   send_email: "PE07",
+  create_email_draft: "PE03",
   schedule_follow_up: "PE06",
   resolve_case: "PE12",
   verify_case: "PE12",
@@ -118,6 +119,7 @@ Deno.serve(async (req: Request) => {
       );
     }
 
+    const admin = adminClient();
     const idempotencyKey = parsed.data.idempotency_key;
     const { data: existing } = await client.from("actions").select("id,status,action_type").eq("idempotency_key", idempotencyKey).maybeSingle();
     if (existing) return Response.json(
@@ -125,7 +127,111 @@ Deno.serve(async (req: Request) => {
       { headers: cors(req) },
     );
 
-    const admin = adminClient();
+    if (actionType === "discard_email_draft") {
+      const draftId = typeof body.input_data?.draft_id === "string" ? body.input_data.draft_id : "";
+      if (!draftId) return Response.json({ error: "draft_id es obligatorio para descartar un borrador." }, { status: 422, headers: cors(req) });
+      const { data: draft, error: draftError } = await admin.from("email_drafts")
+        .select("id,organization_id,status,metadata")
+        .eq("id", draftId)
+        .eq("organization_id", profile.organization_id)
+        .maybeSingle();
+      if (draftError) throw draftError;
+      if (!draft) return Response.json({ error: "El borrador no existe o no pertenece a tu organización." }, { status: 404, headers: cors(req) });
+      if (["sent", "approved"].includes(draft.status)) return Response.json({ error: "No se puede descartar un borrador aprobado o enviado." }, { status: 409, headers: cors(req) });
+      const { error: discardError } = await admin.from("email_drafts").update({ status: "discarded" })
+        .eq("id", draft.id)
+        .eq("organization_id", profile.organization_id);
+      if (discardError) throw discardError;
+      const metadata = draft.metadata && typeof draft.metadata === "object" ? draft.metadata as Record<string, unknown> : {};
+      const creationId = typeof metadata.creation_id === "string" ? metadata.creation_id : null;
+      if (creationId) {
+        const { error: creationError } = await admin.from("creations").update({ status: "cancelled", completed_at: new Date().toISOString() })
+          .eq("id", creationId)
+          .eq("organization_id", profile.organization_id);
+        if (creationError) throw creationError;
+      }
+      return Response.json({ discarded: true, draft_id: draft.id, creation_id: creationId }, { headers: cors(req) });
+    }
+
+    let creationId: string | null = null;
+    if (actionType === "create_email_draft") {
+      const emailId = typeof body.input_data?.email_id === "string" ? body.input_data.email_id : "";
+      if (!emailId) return Response.json({ error: "email_id es obligatorio para crear un borrador." }, { status: 422, headers: cors(req) });
+
+      const { data: email, error: emailError } = await client
+        .from("emails")
+        .select("id,organization_id,thread_id,case_id,direction,sender,recipients,cc,subject,body_text,received_at,metadata")
+        .eq("id", emailId)
+        .eq("organization_id", profile.organization_id)
+        .maybeSingle();
+      if (emailError) throw emailError;
+      if (!email) return Response.json({ error: "El correo no existe o no pertenece a tu organización." }, { status: 404, headers: cors(req) });
+
+      const resolvedCaseId = body.case_id || email.case_id || null;
+      if (resolvedCaseId && resolvedCaseId !== email.case_id) {
+        return Response.json({ error: "El caso no coincide con el correo seleccionado." }, { status: 409, headers: cors(req) });
+      }
+      body.case_id = resolvedCaseId;
+
+      const [{ data: threadEmails, error: threadError }, { data: conversation, error: conversationError }] = await Promise.all([
+        email.thread_id
+          ? client.from("emails").select("id,subject,body_text,direction,sender,received_at,case_id").eq("organization_id", profile.organization_id).eq("thread_id", email.thread_id).order("received_at", { ascending: true }).limit(20)
+          : Promise.resolve({ data: [], error: null }),
+        resolvedCaseId
+          ? client.from("conversations").select("id,case_id,title,status,context,updated_at").eq("organization_id", profile.organization_id).eq("case_id", resolvedCaseId).order("updated_at", { ascending: false }).limit(1).maybeSingle()
+          : Promise.resolve({ data: null, error: null }),
+      ]);
+      if (threadError) throw threadError;
+      if (conversationError) throw conversationError;
+
+      const { data: messages, error: messagesError } = conversation?.id
+        ? await client.from("messages").select("id,role,sender_type,content,content_json,created_at,metadata").eq("conversation_id", conversation.id).order("created_at", { ascending: true }).limit(40)
+        : { data: [], error: null };
+      if (messagesError) throw messagesError;
+
+      const { data: caseRecord, error: caseError } = resolvedCaseId
+        ? await client.from("cases").select("id,case_number,title,description,status,priority,metadata,assigned_to,department_id").eq("id", resolvedCaseId).eq("organization_id", profile.organization_id).maybeSingle()
+        : { data: null, error: null };
+      if (caseError) throw caseError;
+
+      body.conversation_id = body.conversation_id || conversation?.id || null;
+      const context = {
+        version: 1,
+        source_refs: { email_id: email.id, thread_id: email.thread_id, case_id: caseRecord?.id || null, conversation_id: conversation?.id || null },
+        email,
+        thread: threadEmails || [],
+        case: caseRecord,
+        conversation,
+        messages: messages || [],
+      };
+      const instructions = typeof body.input_data?.instructions === "string" ? body.input_data.instructions.trim().slice(0, 2000) : "";
+      body.input_data = {
+        ...body.input_data,
+        email_id: email.id,
+        context,
+        draft: `${instructions || "Redacta una respuesta profesional, clara y contextualizada para el correo proporcionado."}\n\nContexto autorizado del email:\n${JSON.stringify(context).slice(0, 24000)}`,
+        requested_output: "email_draft",
+      };
+
+      const { data: creation, error: creationError } = await admin.from("creations").insert({
+        organization_id: profile.organization_id,
+        created_by: user.id,
+        email_id: email.id,
+        case_id: resolvedCaseId,
+        conversation_id: body.conversation_id,
+        idempotency_key: `${parsed.data.idempotency_key}:creation`,
+        creation_type: "email_draft",
+        status: "queued",
+        title: email.subject || "Borrador de email",
+        prompt: instructions || null,
+        context_snapshot: { version: 1, source_refs: context.source_refs },
+        metadata: { source: "email_inbox", workflow_code: "PE03" },
+      }).select("id").single();
+      if (creationError) throw creationError;
+      creationId = creation.id;
+      body.input_data = { ...body.input_data, creation_id: creationId };
+    }
+
     const { data: workflow, error: workflowError } = await admin
       .from("workflow_definitions")
       .select("id,code")
@@ -202,6 +308,13 @@ Deno.serve(async (req: Request) => {
         payload: body.input_data || {},
       },
     });
+
+    if (actionType === "create_email_draft" && creationId) {
+      const { error: creationExecutionError } = await admin.from("creations").update({ workflow_execution_id: executionId, status: "running" })
+        .eq("id", creationId)
+        .eq("organization_id", profile.organization_id);
+      if (creationExecutionError) throw creationExecutionError;
+    }
 
     if (authority.requires_approval) {
       const { error: pendingActionError } = await admin

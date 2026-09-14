@@ -230,7 +230,7 @@ Deno.serve(async (req: Request) => {
       const inputData = body.input_data;
       const conversationId = typeof body.conversation_id === "string" && body.conversation_id ? body.conversation_id : null;
       const caseId = typeof body.case_id === "string" && body.case_id ? body.case_id : null;
-      const supportedWorkflow = /^PE(?:0[1-9]|1[0-3])$/.test(workflowCode);
+      const supportedWorkflow = /^(?:PE(?:0[1-9]|1[0-3])|CREATOR01)$/.test(workflowCode);
 
       if (!supportedWorkflow || !commandType || typeof inputData !== "object" || inputData === null || Array.isArray(inputData)) {
         return Response.json({ error: "Los datos del comando no son válidos." }, { status: 422, headers: cors(req) });
